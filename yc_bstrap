@@ -1,0 +1,777 @@
+<?php
+/**
+ *****************************************************************************
+ * yc_bstrap - Bootstrapper of the Crescent
+ * YellowCrescent PHP-CLI Scripting Frameworka
+ * 
+ * YC Common Config (YCCC) & YC Bootstrap (YCB)
+ * Common Shared Functions & Definitions
+ *
+ * Copyright (c) 2013 Jacob Hipps - tetrisfrog@gmail.com
+ * http://jhipps.neoretro.net/
+ *
+ * Started: 15 Aug 2013
+ * Updated: 27 Nov 2013
+ * Revision: r5
+ *
+ * Consolidates many of the definitions and utility functions used by
+ * my PHP scripts. This saves me from having to re-define statically
+ * defined vars/constants (eg. ANSI control & color codes), command-line
+ * parsing functions, etc.
+ *
+ * @package		neoretro\yellowcrescent
+ * @subpackage	yc_bstrap
+ * @category	core
+ * @fullpkg		neoretro.yellowcrescent.yc_bstrap
+ * @version		0.01.5
+ * @author		Jacob Hipps - tetrisfrog@gmail.com
+ * @copyright	Copyright (c) 2013 Jacob Hipps/Neo-Retro Group
+ * @license		GNU LGPLv3 - http://www.gnu.org/licenses/lgpl.html
+ * @param		tabstop=4,syntax=php
+ *
+ * @depends		NO_DEPS 
+ *
+ * @link		https://github.com/tetrisfrog/ycbase				YCCC Github page
+ * @link		https://neoretro.net/yccc/							YCCC Home Page - Neo-Retro
+ * @link		http://jhipps.neoretro.net/yccc/base/yc_bstrap		YCCC Tracker - yc_bstrap
+ *
+ *****************************************************************************/
+
+/*****************************************************************************
+ ***************************************************************************** 
+ * Initialization
+ *
+ */
+
+define('YCD_ANSI',		1);
+
+
+function __yc_xcat($xmsg, $xtype="DEBUG", $exitcode=false) {
+	fprintf(stderr,"[yc_bstrap] %s: %s\n",strtoupper($xtype),$xmsg);
+	if($exitcode !== false) {
+		if($exitcode === true) $exitcode = 200;
+		fprintf(stderr,"[yc_bstrap] You killed 'em! [process retuned exit code %03d]\n\n",$exitcode);
+	}
+}
+
+function __yc_dcat($defname, $xmsg="") {
+	__yc_xcat("[ $defname == ".json_encode(constant($defname))." ] $xmsg");
+}
+
+// Create $_YC superglobal to hold our metadata
+if(defined('_YCB_METAGLOBAL_INHIBIT')) {
+	if(_YCB_METAGLOBAL_INHIBIT !== true) {
+		$GLOBALS['_YC'] = Array();
+	} else {
+		__yc_dcat('_YCB_METAGLOBAL_INHIBIT',"Global metadata structure is not available");
+	}
+} else {
+	$GLOBALS['_YC'] = Array();
+}
+
+if(defined('_YCB_METAGLOBAL_NS') && _YCB_METAGLOBAL_NS) $GLOBALS[_YCB_METAGLOBAL_NS] &= $GLOBALS['_YC'];
+
+// Map defines to _YC
+$gze = get_defined_constants(true);
+foreach($gze['user'] as $lval => $rval) if(preg_match('/^_YCB_',$lval)) $_YC['defines'][$lval] = $rval;
+unset($gze);
+
+
+// Setup error, debugging, & exception handling
+if(defined('_YCB_DBG_ERROR_REPORTING')) {
+	if(_YCB_DBG_ERROR_REPORTING === NULL || !is_integer(_YCB_DBG_ERROR_REPORTING)) {
+		error_reporting(E_ERROR);
+	} else {
+		if(_YCB_DBG_ERROR_REPORTING >= 0 && _YCB_DBG_ERROR_REPORTING <= 32767) {
+			error_reporting(_YCB_DBG_ERROR_REPORTING);
+			__yc_dcat('_YCB_DBG_ERROR_REPORTING');
+		} else {
+			__yc_xcat("_YCB_DBG_ERROR_REPORTING is invalid", "FATAL", 200);
+		}
+	}
+}
+
+if(!defined('_YCB_DBG_TRACER_INHIBIT') || (defined('_YCB_DBG_TRACER_INHIBIT') && _YCB_DBG_TRACER_INHIBIT != true)) {
+	assert_options(ASSERT_CALLBACK, 'yc_assert');
+	set_error_handler("yc_die");
+	register_shutdown_function("yc_die","shutdown",$_YC['YC_ESTAT']);
+} else {
+	__yc_dcat('_YCB_DBG_TRACER_INHIBIT',"Error & Exception handling unavailable. Tracing & Asserts inhibited.");
+}
+
+if(!defined('_YCB_AUTOLOAD_INHIBIT') || (defined('_YCB_AUTOLOAD_INHIBIT') && _YCB_AUTOLOAD_INHIBIT != true)) {
+
+	function __autoload($clxname) {
+		if(defined('_YCB_AUTOLOAD_CLASSROOT') && _YCB_AUTOLOAD_CLASSROOT) {
+			$clxroot = realpath(_YCB_AUTOLOAD_CLASSROOT);
+		} else {
+			$clxroot = realpath('./');
+		}
+		$clxfile = realpath($clxroot."/".$clxname.".php");
+		if(!$clxfile) $clxfile = realpath($clxroot."/".$clxname.".class.php");
+		if(!$clxfile || !is_file($clxfile) || !is_readable($clxfile)) {
+			if(function_exists('zecho')) {
+			} else {
+				__yc_xcat('__autoload(): Failed to ','FATAL',201);
+			}
+		}
+	}
+
+} else {
+	__yc_dcat('_YCB_AUTOLOAD_INHIBIT',"Class autoloading inhibited. Some functions and classes may be unavailable and trigger undefined function exceptions.");
+}
+
+/**
+ * yc_enumx
+ * Implements a souped-up enum class type with metadata and callback capabilities
+ *
+ * @method	mixed	yc_get_enum_val()	yc_get_enum_val(class $classname, string $varname)
+ * @link class/yc_enumx
+ *
+ */
+class yc_enumx {
+
+	public function __get($nx) {
+		//echo ANSI_WHT."****** ".ANSI_RED."< __get() // '".ANSI_CYN."$nx".ANSI_RED."' >".ANSI_WHT." ******\n".ANSI_OFF;
+		$rzr = new ReflectionClass($this);
+		$const_list = $rzr->getConstants();
+		if(isset($const_list[$nx])) {
+			return $const_list[$nx];
+		}
+	}
+
+}
+
+
+/**
+ * YC_PROGPATH_OUTTYPE
+ * Class-encapsulated option list/enum for yc_get_prog_path() function's
+ * $outtype parameter.
+ *
+ * @see yc_get_prog_path()
+ * @see yc_enumx()
+ * @link func/yc_get_prog_path
+ * @link class/yc_enumx
+ * @static YC_PROGPATH_OUTTYPE
+ *
+ */
+class YC_PROGPATH_OUTTYPE extends yc_enumx {
+	const __default = self::YC_PROGPATH_ARRAY;
+
+	const YC_PROGPATH_ARRAY  = 0;	//  return assoc. array [default]
+	const YC_PROGPATH_RPSTR  = 1;	//  return realpath string
+	const YC_PROGPATH_BINSTR = 2;	//  return binary name string
+	const YC_PROGPATH_EXISTS = 4;	//  return bool true/false based on if prog exists
+
+	public $__meta = Array(
+	                     'YC_PROGPATH_ARRAY' => Array("return assoc. array", 'return_type' => "array/assoc", 'array_meta' =>
+	                                                  	Array(
+	                                                  	      'realpath' => Array("Fully expanded binary name and path", 'l' => 0, 'i' => 0, 'type' => "string"),
+	                                                  	      'bin' => Array("Name of program binary, as reported by 'whereis' command", 'l' => 0, 'i' => 1, 'type' => "string")
+	                                                  	)
+	                                                  ),
+	                     'YC_PROGPATH_RPSTR' => Array("return realpath string", 'return_type' => "string"),
+	                     'YC_PROGPATH_BINSTR' => Array("return binary name string", 'return_type' => "string"),
+	                     'YC_PROGPATH_EXISTS' => Array("return bool true/false based on if prog exists", 'return_type' => "bool")
+	            	);
+}
+
+
+$_YC['YC_SNAME'] =		$YC_SNAME;
+
+$_YC['YC_ESTAT'] =		Array(
+							'script' => $YCS_INFO,
+							'script_env' => Array(
+												'filepath' => $_SERVER['SCRIPT_NAME'],
+												'uname' => posix_uname(),
+												'php' => Array(
+															'iface' => PHP_SAPI,
+															'bin' => PHP_BINARY,
+															'dir' => PHP_BINDIR,
+															'prefix' => PHP_PREFIX,
+															'debug' => PHP_DEBUG,
+															'version_str' => PHP_VERSION,
+														),
+												'php-ext' => get_loaded_extensions()
+											),
+							'procinfo' =>	Array(
+							                    'pid' => posix_getpid()
+							                ),
+							'yc_revdate' => $YC_REVDATE,
+							'yc_version' => $YC_VERSION,
+							'yc_path' => $YC_BOOTSTRAP,
+							'stdout' => $YC_CONSOLE,
+							'stderr' => $YC_ERROUT,
+						);
+
+
+if(function_exists("setproctitle")) {
+	setproctitle($YC_ESTAT['script']['name']);
+}
+
+function ycxdef($cn,$cv,$icase=true) {
+	$GLOBALS[$cn] = $cv;
+	$GLOBALS['_YC']['_'][$cn] =& $GLOBALS[$cn];
+	define($cn,$cv,$icase);
+}
+
+function ycgdref($cn,&$cr) {
+	$GLOBALS['_YC'][$cn] =& $cr;
+}
+
+
+/**
+ * ANSI Color tables
+ * Defines ANSI escape codes for changing console text color and clearing the screen
+ * 
+ */
+function yc_xansi() {
+	$byebyebirdy = Array('ansi','_','.','-','%','$','!','@','^','&','*','(',')');
+	$bbb_rep = "";
+
+	if(($xindex = func_num_args()) == 0) return false;
+
+	$xdex = func_get_args();
+
+	$buffy = "";
+	$bci = Array();
+	$dxi = 0;
+
+	foreach($xdex as $lval => $rval) {
+		$ccxx = NULL;
+		if(is_array($rval) {
+			foreach($rval as $ri => $subral) {
+				$cctok = str_replace($byebyebirdy,$bbb_rep,strtolower(trim($subral)););
+				if(isset($GLOBALS['_YC']['ansi'][$cctok])) {
+					$ccxx = $GLOBALS['_YC']['ansi'][$cctok];
+					$buffy .= $ccxx;
+					$bci[$dxi] = $ccxx;
+					$dxi++;
+				} else {
+					// warn about bad var name?
+					// XXX-jhipps
+					echo "XXX-FIXME: Bad var name!\n".__FILE__." ".__LINE__." ".__FUNCTION__."\n\n";
+					return false;
+				}
+			}
+		} else if(!is_object($rval) && !is_callable($rval)) {
+			if(isset($GLOBALS['_YC']['ansi'][$cctok])) {
+				$ccxx = $GLOBALS['_YC']['ansi'][$cctok];
+				$buffy .= $ccxx;
+				$bci[$dxi] = $ccxx;
+				$dxi++;
+			} else {
+				// warn about bad var name?
+				// XXX-jhipps
+				echo "XXX-FIXME: Bad var name!\n".__FILE__." ".__LINE__." ".__FUNCTION__."\n\n";
+				return false;
+			}
+
+		}
+	}
+
+	return $buffy;
+}
+
+
+function yc_xdef($xdefx,$dname,$dval) {
+	$YC_ANSI_PREFIX = 'ANSI_';
+
+	//$GLOBALS['_YC']['ANSI'][$dname] = $dval;
+	$GLOBALS['_YC']['ansi'][strtolower($dname)] = $dval;
+
+	ycxdef($YC_ANSI_PREFIX.$dname, $dval);		// ANSI_XCOLORX
+	ycxdef($dname, $dval, false);				// XCOLORX (no ANSI prefix)
+
+}
+
+yc_xdef(YCD_ANSI,	'OFF',		'\033[m');
+yc_xdef(YCD_ANSI,	'HI',		'\033[1m');
+yc_xdef(YCD_ANSI,	'BLK',		'\033[30m');
+yc_xdef(YCD_ANSI,	'RED',		'\033[31m');
+yc_xdef(YCD_ANSI,	'GRN',		'\033[32m');
+yc_xdef(YCD_ANSI,	'YEL',		'\033[33m');
+yc_xdef(YCD_ANSI,	'BLU',		'\033[34m');
+yc_xdef(YCD_ANSI,	'MAG',		'\033[35m');
+yc_xdef(YCD_ANSI,	'CYN',		'\033[36m');
+yc_xdef(YCD_ANSI,	'WHT',		'\033[37m');
+yc_xdef(YCD_ANSI,	'B4',		'\033[4D');
+yc_xdef(YCD_ANSI,	'CLRSCR',	'\033[2J');
+yc_xdef(YCD_ANSI,	'CLRLINE',	'\033[K');
+yc_xdef(YCD_ANSI,	'HOME',		'\033[0;0f');
+yc_xdef(YCD_ANSI,	'XCLEAR',	yc_xansi('CLRSCR','CLRLINE','HOME'));
+
+// CLI Argument/option prefixes
+$YC_ARGPREFIX = Array('-', '--', '/');
+
+/**
+ *  yc_assert_fail()
+ *  Callback for debug assertions to allow the script to exit gracefully and display the point
+ *  at which the assertion failed, along with additional debug info, if necessary.
+ *
+ *  @author     J. Hipps
+ *  @status     WIP
+ *  @added      2013-08-15
+ *  @updated    2013-08-15
+ *  @flags      core, callback, no-return
+ *
+ *  @param      [type]        $afile    [description]
+ *  @param      [type]        $aline    [description]
+ *  @param      [type]        $acode    [description]
+ *  @param      [type]        $adesc    [description]
+ *  @return     [type]                  [description]
+ */
+function yc_assert_fail($afile, $aline, $acode, $adesc = NULL) {
+
+	$tracer = debug_backtrace();
+	$atracer = Array($afile,$aline,$acode,$adesc);
+
+	yc_die("assert",$tracer,$atracer);
+}
+
+/**
+ *  yc_die()
+ *  Shutdown/exit callback function. Automatically hooked when yc_bstrap is included or loaded.
+ *  Decodes and displays any PHP parser, plugin, or subsystem errors if the shutdown was due to
+ *  an error.
+ *
+ *  @author     J. Hipps
+ *  @status     Complete
+ *  @added      2013-08-15
+ *  @updated    2013-08-15
+ *  @flags      core, callback, no-return
+ *
+ */
+function yc_die() {
+
+	$YC_PHP_ESTR =  Array(
+				1	=> "E_ERROR",
+				2	=> "E_WARNING",
+				4	=> "E_PARSE",
+				8	=> "E_NOTICE",
+				16	=> "E_CORE_ERROR",
+				32	=> "E_CORE_WARNING",
+				64	=> "E_COMPILE_ERROR",
+				128	=> "E_COMPILE_WARNING",
+				256	=> "E_USER_ERROR",
+				512	=> "E_USER_WARNING",
+				1024	=> "E_USER_NOTICE",
+				2048	=> "E_STRICT",
+				4096	=> "E_RECOVERABLE_ERROR",
+				8192	=> "E_DEPRECATED",
+				16384	=> "E_USER_DEPRECATED",
+				32767	=> "E_ALL"
+			);
+
+	$arglist = func_get_args();
+	if(isset($arglist[0])) {
+		if(gettype($arglist[0]) != "string") {
+			$errno = $arglist[0];
+			$fmode = $YC_PHP_ESTR[$errno];
+		}
+		$fmode = $arglist[0];
+	}
+	if(isset($arglist[1])) $fdesc = $arglist[1];
+
+	$zstr = "[$fmode : $errno] $fdesc\n\n***";
+
+	if(!(error_reporting() & $errno)) $xbanner = "WARNING";
+	else $xbanner = "FATAL";
+
+	if(function_exists('zecho')) {
+		zecho("$xbanner: $zstr");
+	} else {
+		__yc_xcat($zstr,$xbanner);
+	}
+
+	if(!(error_reporting() & $errno)) return true;
+	else exit($errno);
+
+}
+
+// Long & Short Option with arg matching regex:
+//	/^(?:--XLONG|-X)(?:\=|\s+)(?:(?:\'(?<out_fmt1>[^\']+)\')|(?:\"(?<out_fmt2>[^\"]+)\"))\s*$/
+//
+
+//function gen_xopt_regex($opt_name,$optlist=false,$ignorecase=false,$prefix_optional=false) {
+
+
+/**
+ *  gen_xopt_regex()
+ *  Generates regex statements which correspond to the script's argument parsing requirements.
+ *  Extracts CLI arguments, switches, and other data.
+ *
+ *  @author     J. Hipps
+ *  @status     WIP
+ *  @added      2013-08-15
+ *  @updated    2013-08-15
+ *  @flags      none
+ *
+ *  @return     array        Associative array containing results of command line parsing
+ */
+function gen_xopt_regex() {
+	global $YC_ARGPREFIX;
+	global $YC_ARGFMT;
+
+	/*
+	$DEF_VTYPES =	Array(
+				'str' => 'strval',
+				'array' => 
+	*/
+
+	// vararg (DEF_XARGS) func input paramater schema definition
+	$DEF_XARGS =	Array(
+				0 => Array('var' => 'opt_name', 'vtype' => 'str', 'default' => '[eval]', 'eval' => 'return key($YC_ARGFMT);'),
+				1 => Array('var' => 'optlist', 'vtype' => 'array', 'default' => '[eval]', 'eval' => 'return current($YC_ARGFMT)[\'optlist\']);'),
+				2 => Array('var' => 'ignorecase', 'vtype' => 'bool', 'default' => false),
+				3 => Array('var' => 'prefix_optional', 'vtype' => 'bool', 'default' => false),
+				4 => Array('var' => 'DEBUG_PARAMS', 'next_items' => -1, 'vtype' => 'mixed', 'default' => NULL)
+			);
+
+	// get arg list into array
+	$arglist = func_get_args();
+
+	foreach($DEF_XARGS as $adex => $adef) {
+		if(isset($arglist[$adex])) {
+			// map varname to actual local var using varying var names...
+			unset(${$adef['var']});
+			${$adef['var']} = NULL;
+
+			// assign default value, if needed
+			if(isset($adef['default']) && $adef['default'] !== NULL) {
+				if(strtolower($adef['default']) == "[eval]") {
+					${$adef['var']} = eval($adef['eval']);
+				} else if(strtolower($adef['default']) == "[func]") {
+					if(isset($adef['func']) && iscallable($adef['func'])) {
+						${$adef['var']} = call_user_func($adef['func']);
+					}
+				} else {
+					${$adef['var']} = $adef['default'];
+				}
+			}
+		}
+	}
+
+	
+	$opt = "";
+	if($ignorecase) $opt = "i";
+
+	$opt_prefix_lst = '(?:';
+	foreach($YC_ARG_PREFIX as $idex => $pfx) {
+		if($idex) $sepx = '|';
+		else $sepx = "";
+		$opt_prefix_lst .= $sepx.preg_quote($pfx);
+	}
+	$opt_prefix_lst .= ')'.($prefix_optional != false ? '?' : '');
+
+	$reggie = '/^(?:'.$opt_prefix_lst.$opt_name_list.')(?:\=|\s+)(?:(?:\\\'(?<out_fmt1>[^\\\']+)\\\')|(?:\"(?<out_fmt2>[^\"]+)\"))\s*$/'.$opt;
+
+	return $reggie;
+}
+
+/**
+ *  zecho()
+ *  Wraps the PHP echo() command so that it can be redirected if needed. Used for logging and verbosity control.
+ *
+ *  @author     J. Hipps
+ *  @status     Working
+ *  @added      2013-08-15
+ *  @updated    2013-08-15
+ *  @flags      core
+ *
+ *  @pragma		va=true,minreq=0,va_deptype=true			Variable args, minimum required is zero
+ *           												Functionality is dependent on argument type
+ *  @pragma		va_attrib=printf[+1]						Vararg parsing is printf()-esque (starting at +1 arg offset)
+ *  @pragma		va_attrib=flags[-1]							Flags will be used for additional or ambiguous arguments
+ *           												(parsed from last argument offset-- [-1])
+ * 
+ *  @param      local[$s]				For all non-array/object types (strings, ints, etc.) this
+ *                          			function will perform its normal duty of echoing to the log
+ *                             			or screen, as configured (see flags).
+ *                                	    This is assembled from all string and non-object/array type objects until
+ *                                     	a NULL, ^Z, ^M, ^D or YCZE_STOP token is reached (these can be adjusted
+ *                                      by means of various flags).
+ *  @param  	local[$ai]				Number of arguments
+ *  @param    	local[$xmode]			Flags
+ * 
+ * 
+ *  @example
+ * 
+ * 				Simple echoing and formatting of text:
+ *     			Seperate arguments are broken onto their own line with linebreaks.
+ *     	 			zecho("This is a test. ".$test,print_r($mycoolstuff,true));
+ * 
+ * 				printf()-style formatting:
+ *     				zecho("This is a test. %s
+ *     									
+ */
+
+define('YCZE_NORM',				1<<1);				// Normal operation
+
+define('YCZE_MODE_COLOR',		1<<2);				// Enable color formatting/highlighting
+define('YCZE_MODE_TRACE',		1<<3);				// Enable function tracing and debugging features
+define('YCZE_MODE_VERBOSE',		1<<4);				// Use more verbose output
+define('YCZE_MODE_STYLIZE',		(1<<5|1<<2));		// Use fancy output formatting
+													// (implies YCZE_MODE_COLOR)
+
+define('YCZE_NONL',				(1<<6 & ~(1<<7 & 1<<8));	// Disable line breaks after each argument in
+															// normal operation
+define('YCZE_NOML',				(1<<7 & ~(1<<6 & 1<<8));	// No multiline -- disable line breaks between arguments, but leave the
+															// terminating newline.
+define('YCZE_DOSNL',			(1<<8 & ~(1<<6 & 1<<7));	// Use DOS line breaks: CR+LF (\r\n) instead of Linux/UNIX LF-only (\n)
+
+define('YCZE_NO_CTRLC',			1<<10);				// Ignore	^C
+define('YCZE_NO_CTRLM',			1<<11);				//			^M	/ CR	/ 0x0D	/ '\r'
+define('YCZE_NO_CTRLZ',			1<<12);				//			^Z	/ SUB	/ 0x1A
+define('YCZE_NO_CTRLD',			1<<13);				//			^D	/ EOT	/ 0x04
+define('YCZE_NO_EOF',			1<<14);				//			EOF
+define('YCZE_NO_NUL',			1<<15);				//			NUL 		/ 0x00
+define('YCZE_IGNSCHARS',		0xFC00);			// Do not stop parsing on ^M, ^Z, ^D, EOF, or NUL (except Ctrl+C & Break)
+define('YCZE_IGNALL',			0xFC00|1<<16);		// Ignore all ASCII, ANSI, and extended control codes
+													// (This is likely to cause the program to refuse SIGINT and SIGBREAK events
+													//  if run interactively or via a pipe, which would require intervetion from
+													//  another console window or killing via the kernel, shell, or priveledged process
+													//  by sending SIGKILL)
+													//  
+function zecho($_sdef) {
+
+	global $TX_OUTPUT;
+
+	// fancy pantsy var-arg localizey-okie-folkie-dokie...
+	// Set defaults, then localize to current context (instead
+	// of using tons of array references)
+	$dloclz =	Array(
+						's' => ((is_string($_sdef),
+						'ai' => 0,
+						'xmode' => YCZE_MODE_NORM
+					 );
+
+	zvararg_fmagi(func_num_args(),func_get_args(),$dloclz);
+
+	// localize & stylize!
+	foreach($dloclz as $ludzig) {
+		$$ludzig = $ludzig;
+	}
+
+	if(!$TX_OUTPUT) $TX_OUTPUT = STDOUT;
+	fprintf($TX_OUTPUT,$s);
+}
+
+
+
+/**
+ *  zvararg_fmagi()
+ *  Performs variable argument parsing and flexible parsing of associative and
+ *  indexed arrays, objects, callbacks, etc. passed as complex function parameters.
+ * 
+ * 	Used with flag-based vararg functions like zecho()
+ *
+ *  @author     J. Hipps
+ *  @status     Working
+ *  @added      2013-12-28
+ *  @updated    2013-12-28
+ *  @flags      core
+ * 
+ */
+
+define('YCZVA_MODE_NORM',		1<<1);			// Normal
+define('YCZVA_ARESCURSE',		1<<2);			// Enable recursive array parsing
+define('YCZVA_NOAPARSE',		1<<3);			// Disable array parsing
+define('YCZVA_CALLBACK',		1<<4);			// Enable callback
+define('YCZVA_OBJPARSE',		1<<5);			// Enable object parsing
+define('YCZVA_RETLOCS',			1<<6);			// Return local vars in an array
+define('YCZVA_NOTOUCHLOCS',		1<<7|1<<6);		// Don't touch original local var refs
+												// (Implies YCZVA_RETLOCS)
+define('YCZVA_REVVA',			1<<16);			// Reverse operation! Parse and split array input
+												// and call specfied function, object, or method
+												// with seperated arguments (xparams is an
+												// array which specifies the argument schema)
+
+
+function zvararg_magi($acount,$alist,&$floca=NULL,$xflags=YCZVA_MODE_NORM,$xparams=NULL) {
+
+	$targs = 0;
+
+	echo("zvararg_magi(): [acount=$acount]\n\t { alist =\n".print_r($alist,true)."\n}\n\n");
+
+	if(is_array($alist)) {
+		$idexc = 0;
+		foreach($alist as $adex => $aix) {
+			$adx['list'][$targs] = $aix;
+
+			if($idexc !== $adex) $adx['assoc'][$adex] &= $adx['list'][$targs];
+			
+			$obc[$targs]['i'] = $targs;
+
+			if($idexc !== $adex) {
+				$oba[$targs] &= $obd[$targs];
+			}
+
+			$targs++;
+			$idexc++;
+		}
+	}
+}
+
+/**
+ *  yc_read_args()
+ *  Parse argument list from $argv; Check against YC metadata array containing argument parsing rules
+ *
+ *  @author     J. Hipps
+ *  @status     Incomplete
+ *  @added      2013-08-15
+ *  @updated    2013-08-15
+ *  @flags      none
+ *
+ *  @return     array        Associative array of arguments passed to script
+ */
+function yc_read_args() {
+	global $YC_ARGFMT;
+
+	foreach($argv as $aloc => $aval) {
+		$arglist[$aloc]['raw'] = $aval;
+		$arglist[$aloc]['read'] = false;
+	}
+
+	foreach($YC_ARGFMT as $argname => $parsex) {
+		foreach($argv as $aloc => $aval) {
+			
+		}
+	}
+}
+
+/**
+ *  YCDBG_doandsay()
+ *  Takes a PHP statement, prints it to stdout, then runs eval() on it
+ *
+ *  @author     J. Hipps
+ *  @status     WIP
+ *  @added      2013-10-10
+ *  @updated    2013-10-10
+ *  @flags      debug
+ *  @param      mixed         $do     Statement to execute and echo to stdout
+ *  @param_opt  string        $say    Optional comment; echoed before statement
+ *  @default				  $say	  (null)
+ *                                    
+ */
+function YCDBG_doandsay($do,$say="") {
+
+	if($say) echo ">> // $say\n";
+	echo ">> [ $do ]\n";
+	echo "#>\t\t";
+	$rvx = eval($do);
+	echo "\n>> <OK>\n\n";
+	
+	return $rvx;
+}
+
+/**
+ *  YCDBG_vvar() Pretty-print a var to stdout
+ *  @author     J. Hipps
+ *  @status     WIP
+ *  @added      2013-10-10
+ *  @updated    2013-10-10
+ *  @flags      debug
+ * 
+ *  @param      string        $xn     Name of var or operation
+ *  @param_opt  mixed         $xv     Value
+ *  @default				  $xv	  (false). In vitro, set to value of given variable; imported using 'global'
+ *  @param_opt  string        $pfx    Var prefix
+ *  @default				  $pfx    "$" 
+ */
+function YCDBG_vvar($xn,$xv=false,$pfx="\$") {
+
+	if($xn[0] != "\$") $zname = $pfx.$xn;
+	else $zname = $xn;
+
+	$zval = $xv;
+
+	echo "\t[ ".ANSI_RED.$zname.ANSI_WHT." = ".ANSI_CYN.$zval.ANSI_OFF." ]\n";
+
+}
+
+
+/**
+ *  yc_get_prog_path()
+ *  Returns information about the program/binary in question
+ *
+ *  @author     J. Hipps
+ *  @status     WIP
+ *  @added      2013-10-10
+ *  @updated    2013-10-10
+ *  @flags      none
+ *
+ *  @param      string        $binname    Name of program binary
+ *  @param_opt  enum          $outtype    Type of data to return to caller (YC_PROGPATH_OUTTYPE)
+ *  @default				  $outtype	  YC_PROGPATH_ARRAY = 0
+ * 
+ *  @return     mixed        Information about the binary; content and type determined by $outtype. Default is
+ *  					     associative array with 'realpath' and 'bin' string members.
+ * 
+ *  @enumdef		$outtype				YC_PROGPATH_OUTTYPE
+ *	@econst			YC_PROGPATH_ARRAY		return assoc. array [array/assoc; default]
+ *					      					Contains 'realpath' string (eg. "/usr/bin/php") and
+ *  							       		'bin' (eg. "php") members at the top-level of the array
+ *	@econst			YC_PROGPATH_RPSTR		return realpath string [string]
+ *	@econst			YC_PROGPATH_BINSTR		return binary name string [string]
+ *	@econst			YC_PROGPATH_EXISTS		only return true/false based on if prog exists or 'whereis' command fails [bool]
+ * 
+ */
+function yc_get_prog_path($binname,$outtype=YC_PROGPATH_ARRAY) {
+	$clx = "whereis -b '$binname'";
+
+	$whereru = trim(shell_exec($clx));
+	if(!preg_match("^([^:]+): ([^ ]+(?:\/([^\/ ]+))).*$",$whereru,$whatdex)) {		
+		$xout = false;
+	} else {
+		$binpath = $whatdex[0][1];
+		$binname = $whatdex[0][2];
+		$xout = Array('realpath' => $binpath, 'bin' => $binname);
+	}
+
+	return $xout;
+}
+
+
+function ycdoc_fp_head($fname) {
+
+/*
+
+(?Jis)
+{0}^
+{0}(?## Shebang ##)(?:\#\!(?<shebang>[a-zA-Z0-9\-\@\$\:\(\)\[\]\.\_\\\/]+)[\s\n\t\#\/]+?)?
+{0}(?## Leading comments and whitespace ##)(?<l_comment_block>(?<l_comment_full>(?<l_comment_marker>([\n\s\t]*)(\#+|\/\/|\*+)([\s\t]*)(?<l_comment>[^\n\r]+)(?:[\s\t]*[\n\r]{1,2})))+)?
+{0}(?## PHP script opening tag ##)(?:[\s\t]*(?<php_script_open>\<[\?\%]([phPH]{0,3}))[\n\s\/\*]*)
+{0}(?## Comment open and YCDOC token check ##)(?<ycd_copen_full>(?:\/\*)(?:.*)(\%\%)((?<ycd_ycdoc_basename>${pcYCDOC})((?<ycd_spec_sepa>[-_\/\[\(\:])(?<ycdoc_spec>[a-zA-Z0-9\-\_\.\*]+)(?<ycdoc_spec_clsr>(?(?=) )?)?(?:(?![\-\*\#\/\\\+\=\_]{2,})))?))([\s\t\n\*\/\\\#\=\-\_\+\~]+?)' .
+{0}(?## Comment body ##)(?<ycdoc_body>([\s\S\n\r]+))(?:[\s\t\n\*\/\-\_\=\$]*)(?<ycodc_clbracket>(${pcYCDOC})\%\%)
+^
+{0}(?#
+# Shebang ##)(?:\#\!(?<shebang>[a-zA-Z0-9\-\@\$\:\(\)\[\]\.\_\\\/]+)[\s\n\t\#\/]+?)?(?#
+
+# Leading comments and whitespace ##)(?<l_comment_block>(?<l_comment_full>(?<l_comment_marker>([\n\s\t]*)(\#+|\/\/|\*+)([\s\t]*)(?<l_comment>[^\n\r]+)(?:[\s\t]*[\n\r]{1,2})))+)?(?#
+
+# PHP script opening tag ##)(?:[\s\t]*(?<php_script_open>\<[\?\%]([phPH]{0,3}))[\n\s\/\*]*)
+{0}(?## Comment open and YCDOC token check ##)(?<ycd_copen_full>(?:\/\*)(?:.*)(\%\%)((?<ycd_ycdoc_basename>${pcYCDOC})((?<ycd_spec_sepa>[-_\/\[\(\:])(?<ycdoc_spec>[a-zA-Z0-9\-\_\.\*]+)(?<ycdoc_spec_clsr>(?(?=) )?)?(?:(?![\-\*\#\/\\\+\=\_]{2,})))?))([\s\t\n\*\/\\\#\=\-\_\+\~]+?)(?#
+
+# Comment body ##)(?<ycdoc_body>([\s\S\n\r]+))(?:[\s\t\n\*\/\-\_\=\$]*)(?<ycodc_clbracket>(${pcYCDOC})\%\%)
+
+^
+{0}(?## Shebang ##)(?:\#\!(?<shebang>[a-zA-Z0-9\-\@\$\:\(\)\[\]\.\_\\\/]+)[\s\n\t\#\/]+?)?
+{0}(?<l_comment_block>(?<l_comment_full>(?<l_comment_marker>([\n\s\t]*)(\#+|\/\/|\*+)([\s\t]*)(?<l_comment>[^\n\r]+)(?:[\s\t]*[\n\r]{1,2})))+)?(?:[\s\t]*(?<php_script_open>\<[\?\%]([phPH]{0,3}))[\n\s\/\*]*)(?<ycd_copen_full>(\/\*)(.*)(\%\%)(YCDOC([-_\/\:](?<ycdoc_spec>[a-zA-Z0-9\-\_\.\*]*)?(?:(?![\-\*\#\/\\\+\=\_]{2,})))?))([\s\t\n\*\/\\\#\=\-\_\+\~]+?)(?<ycdoc_body>([\s\S\n\r]+))(?:[\s\t\n\*\/\-\_\=\$]*)(?<ycodc_clbracket>(YCDOC)\%\%)
+ */
+
+	$mrgx_dmatch_opt =		PCRE_INFO_JCHANGED | PCRE_UTF8 | PCRE_CASELESS;
+							// capture shebang, if exists
+	$mrgx_dmatch_rgx =		'^(?:\#\!(?<shebang>[a-zA-Z0-9\-\@\$\:\(\)\[\]\.\_\\\/]+)[\s\n\t\#\/]+?)?' .
+							// capture any comments, whitespace, etc. before the opening PHP script bracket, if they exist
+							// (uses ?J option to allow multi-line matching)
+							'(?<l_comment_block>(?<l_comment_full>(?<l_comment_marker>[\n\s]*)(\#|\/\/)([\s\t]*)(?<l_comment>[^\n\r]+)(?:[\s\t]*[\n\r]{1,2})))+)?' .
+							// capture 
+							'(?:[\s\t]*(?<php_script_open>\<[\?\%]([phPH]{0,3}))[\n\s\/\*]*)(?<ycd_copen_full>(\/\*)([\*\s\t\n]*)(\%\%)(YCDOC([-_\/\:](?<ycdoc_spec>[a-zA-Z0-9\-\_\.\*]*)?(?:(?![\-\*\#\/\\\+\=\_]{2,})))?))([\s\t\n\*\/\\\#\=\-\_\+\~]+?)(?<ycdoc_body>([\s\S\n\r]+))(?:[\s\t\n\*\/\-\_\=\$]*)(?<ycodc_clbracket>(YCDOC)\%\%)';
+	$mrgx_kmatch =			'^(?:[\s\*_\-]*)[\@\%\!](?<lval>[a-zA-Z0-9_\-]+)(?:[\[\(](?<slval>[a-zA-Z0-9\-_]+)[\]\)])?(?:[\s\n\r\t:\-=]+)(?<rval>.+?)$';
+
+
+}
+
+
+?>

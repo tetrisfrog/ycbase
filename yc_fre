@@ -1,0 +1,43 @@
+<?php
+
+class ycDFM {
+	public $xtype = 'undefined';
+	public $magic;
+	protected $_meta;
+
+	public function __construct($fmt_data) {
+		$this->$_meta = $fmt_data;
+	}
+
+	public function __get($lval) {
+		if(isset($this->$_meta[$lval])) return $this->$_meta[$lval];
+		else return NULL;
+	}
+}
+
+abstract class ycDFMCompressed extends ycDFM {
+	public $xtype = 'compressed';
+
+	public function analyze($indata);
+	public function decompress($indata);
+}
+
+abstract class ycDFMImage extends ycDFM {
+	public $xtype = 'image';
+
+	public function analyze($indata);
+	public function decompress($indata);
+}
+
+abstract class ycDFMArchive extends ycDFM {
+	public $xtype = 'archive';
+
+	protected $_filelist;
+
+	public function analyze($indata);
+	public function enum_contents($indata);
+	public function decompress($xid);
+}
+
+
+?>

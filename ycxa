@@ -1,0 +1,74 @@
+#!/usr/bin/php
+<?php
+
+/*
+
+	user
+		checksum
+			md5
+			ed2k
+			crc32
+			sha1
+
+		source
+			filename
+			filesize
+
+		mimetype
+		video
+			anime
+				series
+					name
+						jp
+						jp_rom
+						en
+					anidb
+						id
+				season
+					type
+						[array/flags] { seasonal, ova, ona, extra, bonus, ... }
+				episode
+					season_id
+					episode_id
+			publisher
+				[array]
+		audio
+			stream
+				lang
+					[array/flags]		{ en, jp, fr, ... }
+
+
+
+ */
+
+
+function yc_xattr_enabled($fpath,$dont_deref=false) {
+	$xderef = ($dont_deref ? XATTR_DONTFOLLOW : 0);
+	$frealpath = realpath($fpath);
+	return xattr_supported($frealpath,$xderef);
+}
+
+function yc_xattr_enum($fpath,$use_root_context=false,$dont_reref=false) {
+	//if(yc_xattr_enabled($fpath) !== true) return Array('error' => 'UNSUPPORTED');
+
+	//$ctxflag = ($use_root_context ? XATTR_ROOT : 0) | ($dont_deref ? XATTR_DONTFOLLOW : 0);
+
+	$xlistx = xattr_list($fpath);
+	//print_r($xlistx);
+
+	if(is_array($xlistx) && count($xlistx) > 0) {
+		foreach($xlistx as $xi => $xv) {
+			$xout[$xv] = xattr_get($fpath,$xv);
+		}
+	} else {
+		$xout = Array(NULL);
+	}
+
+	return $xout;
+}
+
+
+print_r(yc_xattr_enum(realpath($argv[1])));
+
+
+?>

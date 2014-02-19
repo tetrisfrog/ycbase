@@ -1,0 +1,63 @@
+#!/usr/bin/php
+<?php
+
+
+
+$ycsinfox = <<<END
+
+
+END;
+
+$YC_SNAME = "unixtime2date";
+$YCS_INFO = 	Array(
+                   'name' => $YC_SNAME,
+                   'desc' => "UNIX Epoch Timestamp to Date Conversion tool",
+                   'author' => "J. Hipps",
+                   'copyright' => "Copyright (c) 2013 J. Hipps",
+                   'website' => "http://neoretro.net/";
+                   'started' => "23 Aug 2013",
+                   'updated' => "23 Aug 2013",
+                   'revision' => 0,
+                   'deps' => 	Array(
+                                    'yc_bstrap' => Array('desc' => "YellowCrescent Common PHP Codebase", 'rev' => 0)
+								)
+				);
+
+$YC_CONSOLE = STDOUT;
+$YC_ERROUT = STDERR;
+$YC_BOOTSTRAP = realpath("./yc_bstrap");
+
+require_once($YC_BOOTSTRAP);
+
+$YC_ARGFMT =	Array(
+					'CL_SNAME' => Array('req' => true, 'mainarg' => false, 'global' => true, 'aloc' => 0, 'regex' => '/^(?:([^ ]+)\/)?(?<CL_SNAME>[^ ]+)$/'),
+					'input_ts' => Array('req' => true, 'mainarg' => true, 'rloc' => 99, 'regex' => '/^(?<input_ts>-?[0-9]+(?:\.?(?<input_ts_frac>[0-9]*))?)$/', 'export_matches' => "named"),
+					'out_fmt'  => Array('req' => false, 'mainarg' => false, 'rloc' => 1, 'sflag' => 'f', 'lflag' => 'format', 'subargs' => 1 , 'regex' => "")
+				);
+
+
+function show_usage() {
+	global $GL_SNAME;
+	zecho("\n\n");
+	zecho($YCS_INFO['name']."\n");
+	zecho($YCS_INFO['desc']."\n");
+	zecho($YCS_INFO['copyright']."\n");
+	zecho($YCS_INFO['website']."\n\n");
+
+	zecho("Usage:\n");
+	zecho("\t$YC_SNAME <options> [unix_timestamp]\n\n");
+}
+
+if($argc < 2) {
+	show_usage();
+	exit(1);
+}
+
+$input_ts = floatval($argv[1]);
+
+zecho("\n$YC_SNAME:  ");
+echo date("r",$input_ts);
+zecho("\n\n");
+
+
+?>

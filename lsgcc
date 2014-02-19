@@ -1,0 +1,15 @@
+#!/usr/bin/php
+<?php
+
+/*
+$LOCATE_LOC = realpath(shell_exec(`env whereis -b locate`));
+$locate_lister = exec($LOCATE_LOC." gcc" );
+*/
+
+$envpath = trim(exec(cmd)$_SERVER['PATH']);
+
+$pathx = 
+
+
+
+?>

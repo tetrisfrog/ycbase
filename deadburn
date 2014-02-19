@@ -1,0 +1,1083 @@
+#!/usr/bin/php
+<?php
+/*
+
+deadBurn
+
+Multi-tool for working with DeadBeef playlists
+including burning CDs.
+
+Copyright (c) 2011-2012 Jacob Hipps
+http://jhipps.org/ - tetrisfrog
+
+Licensed under LGPL v3
+
+- Added support for copying playlist to a target directory/device (1.1.0)
+- Added feature to suggest how to install missing packages/progs (1.1.1)
+- Fixed major problem dbpl_load() where both outter and inner FOR loops used the
+  same variable name... d'oh! (1.1.2)
+*/
+
+$DBURN_VERSION = "1.1.2";
+$DBURN_DATE = "01 May 2012";
+
+error_reporting(E_ERROR);
+
+
+// ANSI Color tables
+$ANSI_OFF = "\033[m";
+$ANSI_HI  = "\033[1m";
+$ANSI_BLK = "\033[30m";
+$ANSI_RED = "\033[31m";
+$ANSI_GRN = "\033[32m";
+$ANSI_YEL = "\033[33m";
+$ANSI_BLU = "\033[34m";
+$ANSI_MAG = "\033[35m";
+$ANSI_CYN = "\033[36m";
+$ANSI_WHT = "\033[37m";
+
+$ANSI_B4  = "\033[4D";
+
+function upk($ffmt,$inbin) {
+	$ttt = unpack($ffmt,$inbin);
+	return $ttt[1];
+}
+
+// converted to PHP from playlist.c
+
+function dbpl_load ($fname) {
+
+    global $cdex;
+
+    $fp = fopen($fname, "rb");
+
+    if (!$fp) {
+        return -1;
+    }
+
+    //playItem_t *it = NULL;
+
+    if (($magic = fread($fp, 4)) === false) {
+	die("load_fail - magic");
+    }
+    if (strncmp($magic, "DBPL", 4)) {
+        die("bad signature\n");
+    }
+    if (($majorver = upk("C",fread($fp, 1))) === false) {
+        die("load_fail - majorver");
+    }
+    
+    if (($minorver = upk("C",fread($fp, 1))) === false) {
+	die("load_fail - minorver");
+    }
+   
+    //uint32_t cnt;
+    if (($cnt = upk("I",fread($fp, 4))) === false) {
+	die("load_fail - cnt");
+    }
+
+    for ($i = 0; $i < $cnt; $i++) {
+
+	//echo ">> i=$i\n";
+        //it = pl_item_alloc ();
+        //if (!it) {
+        //    goto load_fail;
+        //}
+
+        //uint16_t l;
+
+	if(feof($fp)) {
+		echo "EOF DETECTED - ".__LINE__."\n";
+		break;
+	}
+
+        // fname
+        if (($l = upk("S",fread($fp, 2))) === false) {
+	    die("load_fail - l");
+        }
+
+	if(feof($fp)) {
+		echo "EOF DETECTED - ".__LINE__."\n";
+		break;
+	}
+
+        //it->fname = malloc (l+1);
+        if (($it['fname'] = fread ($fp, $l)) === false) {
+            die("load_fail - fname");
+        }
+        $it['fname'][$l] = NULL;
+
+        // decoder
+
+        //uint8_t ll;
+        if (($ll = upk("C",fread($fp, 1))) === false) {
+	    die("load_fail - ll");
+        }
+        if ($ll >= 20) {
+	    die("load_fail - ll >= 20");
+        }
+        if ($ll) {
+            //char decoder[20];
+            if (($decoder = fread($fp, $ll)) === false) {
+		die("load_fail - decoder");
+            }
+            $decoder[$ll] = NULL;
+            $it['decoder'] = $decoder;
+        }
+        
+	// tracknum
+        if (($l = upk("S",fread($fp, 2))) === false) {
+	    die("load_fail - tracknum");
+        }
+        $it['tracknum'] = $l;
+
+        // startsample
+        if (($it['samplestart'] = fread($fp, 4)) === false) {
+	    die("load_fail - startsample");
+        }
+        // endsample
+        if (($it['endsample'] = fread($fp, 4)) === false) {
+	    die("load_fail - endsample");
+        }
+        // duration
+        //float d;
+        if (($d = upk("f",fread($fp, 4))) === false) {
+	    die("load_fail - duration");
+        }
+        $it['duration'] = $d;
+
+        // get const filetype string from decoder
+
+        //uint8_t ft;
+        if (($ft = upk("C",fread($fp, 1))) === false) {
+	    die("load_fail - ft");
+        }
+        if ($ft) {
+            //char ftype[ft+1];
+            if (($ftype = fread($fp, $ft)) === false) {
+		die("load_fail - ftype");
+            }
+            $ftype[$ft] = NULL;
+        }
+        if (($it['replaygain_album_gain'] = upk("f",fread($fp, 4))) === false) {
+            die("load_fail - replaygain_album_gain");
+        }
+        if (($it['replaygain_album_peak'] = upk("f",fread($fp, 4))) === false) {
+	    die("load_fail - replaygain_album_peak");
+        }
+        if ($it['replaygain_album_peak'] == 0) {
+            $it['replaygain_album_peak'] = 1;
+        }
+        if (($it['replaygain_track_gain'] = upk("f",fread($fp, 4))) === false) {
+	    die("load_fail - replaygain_track_gain");
+        }
+        if (($it['replaygain_track_peak'] = upk("f",fread($fp, 4))) === false) {
+	    die("load_fail - replaygain_track_peak");
+        }
+        if ($it['replaygain_track_peak'] == 0) {
+            $it['replaygain_track_peak'] = 1;
+        }
+        if ($minorver >= 2) {
+            if (($it['_flags'] = upk("I",fread($fp, 4))) === false) {
+		die("load_fail - _flags");
+            }
+        }
+        else {
+            if ($it['startsample'] > 0 || $it['endsample'] > 0 || $it['tracknum'] > 0) {
+                //$it['_flags'] |= DDB_IS_SUBTRACK;
+            }
+        }
+
+        //int16_t nm = 0;
+        if (($nm = upk("s",fread($fp, 2))) === false) {
+	    die("load_fail - nm");
+        }
+        for ($ii = 0; $ii < $nm; $ii++) {  // <<<<<<<<<<<<<<<<<<< FIXED!
+            //char key[1024];
+            //char value[1024];
+
+            if (($l = upk("S",fread($fp, 2))) === false) {
+		echo "FAILED AT ".__LINE__."\n";
+                //goto load_fail;
+            }
+            if (!$l || $l >= 1024) {
+		echo "FAILED AT ".__LINE__."\n";
+                //goto load_fail;
+            }
+            if (($key = fread($fp, $l)) === false) {
+		echo "FAILED AT ".__LINE__."\n";
+                //goto load_fail;
+            }
+
+            $key[$l] = NULL;
+
+            if (($l = upk("S",fread($fp, 2))) === false) {
+		echo "FAILED AT ".__LINE__."\n";
+                //goto load_fail;
+            }
+            if (!$l || $l >= 1024) {
+                // skip
+                fseek($fp, $l, SEEK_CUR);
+            }
+            else {
+                if (($value = fread($fp, $l)) === false) {
+			echo "FAILED AT ".__LINE__."\n";
+                    //goto load_fail;
+                }
+                $value[$l] = NULL;
+
+		$it[$key] = $value;
+                //pl_add_meta (it, key, value);
+            }
+        }
+
+        //pl_insert_item (playlist->tail[PL_MAIN], it);
+        //pl_item_unref (it);
+        //trace ("last playlist item refc: %d\n", it->_refc);
+        //it = NULL;
+	//print_r($it);
+	//echo "\n\n\n";
+
+	$cdex[] = $it;
+
+	unset($it);
+	$zzz++;
+	//if($zzz > 5) break;
+    }
+
+    if ($fp) fclose ($fp);
+
+    return 0;
+}
+
+function format_duration($insecs) {
+        
+        $inss = intval($insecs);
+
+        if($inss > 3600) {
+                $tt_h = intval($inss / 3600);
+                $inss -= ($tt_h * 3600);
+        }
+
+        if($inss > 60) {
+                $tt_m = intval($inss / 60);
+                $inss -= ($tt_m * 60);
+        }
+        $tt_s = $inss;
+
+        if($tt_h) $outfmt = sprintf("%01d:%02d:%02d",$tt_h,$tt_m,$tt_s);
+        else      $outfmt = sprintf("%01d:%02d",$tt_m,$tt_s);
+
+        return $outfmt;
+}
+
+
+function install_suggest($pkg_apt,$pkg_yum="",$pkg_ports="",$pkg_url="") {
+
+	if(!$pkg_yum) $pkg_yum = $pkg_apt;
+	if(!$pkg_ports) $pkg_ports = $pkg_apt;
+	if(!$pkg_apt) {
+		echo "To install, please visit:\n\t$pkg_url\n...and download the correct package for your system.\n\n";
+		return;
+	}
+
+	$ldistro = trim(`uname -a`);
+
+	if(preg_match("/(Ubuntu|Debian|Mint)/i",$ldistro)) {
+		echo "To install, try:\n\t{$GLOBALS['ANSI_HI']}sudo apt-get install $pkg_apt{$GLOBALS['ANSI_OFF']}\n\n";
+	} else if(preg_match("/(Fedora|Red Hat)/i",$ldistro)) {
+		echo "To install, try (as root):\n\t{$GLOBALS['ANSI_HI']}yum install $pkg_yum{$GLOBALS['ANSI_OFF']}\n\n";
+	} else if(preg_match("/(Darwin|BSD)/i",$ldistro)) {
+		echo "Check for package availability via Ports as '{$GLOBALS['ANSI_HI']}$pkg_ports{$GLOBALS['ANSI_OFF']}' (or similar)\n\n";
+	}
+
+}
+
+
+function show_usage() {
+
+        echo "\nusage: ".$_SERVER['argv'][0]." [operation] [options] playlist [target]\n";
+        echo "     Burns a deadbeef playlist (.dbpl) to an Audio CD gaplessly.\n\n";
+        echo "           playlist   - Specifies the filename of the playlist\n";
+        echo "           target     - Specifies target path for copy operations. Can also be\n";
+	echo "                        used to specify burner device instead of -d option.\n";
+	echo "                        Will overwrite files without prompting.\n\n";
+        echo "     operation:\n\n";
+	echo "           -Xb        - Burn an Audio CD (CD-DA) using cdrdao\n";
+	echo "           -Xc        - Copy tracks to target location\n";
+	echo "           -Xp        - Print track listing\n";
+	//echo "           -Xi        - Copy tracks to an iPod device\n";
+	//echo "           -XIS       - Sync tracks to an iPod device\n";
+	echo "\n";
+	echo "     options:\n\n";
+        echo "           -s ##      - Specify CD burning speed (default: 24x)\n";
+        echo "           -d dev     - Specify the CD burner device to use\n";
+        echo "           -t temp    - Specify temporary directory\n";
+        echo "           -v         - Verbose. Shows conversion program output\n";
+	echo "           --mkdir[=dir]\n";
+	echo "                      - Creates a directory at target location if it\n";
+	echo "                        does not exist\n";
+	echo "           --spcx     - Converts spaces to underscores (_) when copying\n";
+	echo "                        files to target.\n";
+	echo "           --noclob   - Don't clobber. Does not overwrite files.\n";
+        echo "           --keep     - Keep temporary files\n";
+	echo "           --dry      - Dry run. Convert files, but don't burn\n";
+	echo "           --noconv   - Don't convert files (useful if previously converted)\n";
+	echo "           --noeject  - Don't eject CD when finished\n";
+	echo "           --pdev[=printer]\n";
+	echo "                      - Specifies printer device to use when printing\n";
+	echo "           -P spec=value\n";
+	echo "                      - Define a printer parameter\n";
+	echo "           --pparam?  - Lists help for printer parameters and defaults\n";
+        echo "\n\n";
+        exit();
+
+}
+
+// default printer params
+$prparams = array(
+ 'type'         => "epl2",		// printer type
+ 'title'        => "",                  // print-out title/header
+ 'output'       => "text",              // output type
+ 'albtype'      => "normal",             // album type (normal= regular CD, mix= mix CD or 'Various Artists' compilation)
+ 'omit_duration' => "no",
+ 'qrcode'	=> "",
+ 'upc'		=> "",
+ 'code128'	=> "",
+ 'native_codes' => "yes"
+);
+
+$prparams_def = array(
+ 'type'		=> "Printer type [epl2,pdf,normal]",
+ 'title'	=> "Title shown on the header",
+ 'output'	=> "Output type [text,vector]",
+ 'albtype'	=> "Album type [normal,mix,va]",
+ 'omit_duration' => "Omit the track length [yes,no]",
+ 'qrcode'	=> "Outputs a given QR code",
+ 'upc'		=> "Outputs a given UPC barcode",
+ 'code128'	=> "Outputs a given Code128 barcode",
+ 'native_codes' => "Natively generate barcodes if possible [yes,no]"
+);
+
+function pparam_help() {
+	global $prparams;
+	global $prparams_def;
+
+	echo "\n";
+	echo "Printer Parameter help:\n";
+	echo "   List of printer parameters that control the printer output.\n\n";
+
+	echo "To set a parameter use: -P parameter_name=value\n";
+	echo "There cannot be any spaces around the equals sign. To define a value\n";
+	echo "that contains spaces, put the whole thing in double-quotes.\n";
+	echo "Examples:\n";
+	echo "               -P output=text\n";
+	echo "               -P \"title=Cool Mix Tape\"\n";
+	echo "\n";
+
+	echo str_pad("Parameter",15).str_pad("Default Value",15)."Description\n\n";
+	foreach($prparams as $kk => $thispp) {
+		echo str_pad($kk,15).str_pad(($thispp ? $thispp : "(null)"),15).$prparams_def[$kk]."\n";
+	}
+
+	echo "\n\n";
+	exit();
+}
+
+echo "\n";
+echo "     _                _ ____  _   _ ____  _   _\n";
+echo "  __| | ___  __ _  __| | __ )| | | |  _ \\| \\ | |\n";
+echo " / _` |/ _ \\/ _` |/ _` |  _ \\| | | | |_) |  \\| |\n";
+echo "| (_| |  __/ (_| | (_| | |_) | |_| |  _ <| |\\  |\n";
+echo " \\__,_|\\___|\\__,_|\\__,_|____/ \\___/|_| \\_\\_| \\_|\n\n";
+
+echo "deadbeef playlist burner - http://jhipps.org/ - $DBURN_VERSION ($DBURN_DATE)\n\n";
+
+
+// default options
+$dry = false;
+$keep_temp = false;
+$space_conv = false;
+$verbose = false;
+$no_eject = false;
+$no_conv = false;
+$no_clob = false;
+$lpr_enabled = false;
+$lpr_spec = "";
+$outtmp = "/tmp/waver";
+$pregap = 0;            // 0 = gapless
+$cd_speed = 24;
+$device = "";
+$infile = "";
+$target = "";
+//$bspd = "--speed 16 ";  // additional cdrdao option (followed by a space)
+$op_burn = false;
+$op_copy = false;
+$resample = false;
+
+// parse command line options
+$skipnext = false;
+
+foreach($_SERVER['argv'] as $gci => $thisopt) {
+
+	if($gci == 0) continue;  // skip prog name
+	if($skipnext) {
+		$skipnext = false;
+		continue;
+	}
+
+	if($thisopt == "-d") {
+		$device = $_SERVER['argv'][$gci+1];
+		$skipnext = true;
+	} else if($thisopt == "-s") {
+		$cd_speed = $_SERVER['argv'][$gci+1];
+		$skipnext = true;
+	} else if($thisopt == "-t") {
+		$outtmp = $_SERVER['argv'][$gci+1];
+		$skipnext = true;
+	} else if($thisopt == "--keep") {
+		$keep_temp = true;
+	} else if($thisopt == "--dry") {
+		$dry = true;
+	} else if($thisopt == "-v") {
+		$verbose = true;
+	} else if($thisopt == "--spcx") {
+		$space_conv = true;
+	} else if($thisopt == "--noeject") {
+		$no_eject = true;
+        } else if($thisopt == "--noconv") {
+                $no_conv = true;
+        } else if($thisopt == "--noclob") {
+                $no_clob = true;
+	} else if($thisopt == "--resample") {
+		$resample = true;
+	} else if($thisopt == "--mkdir" || substr($thisopt,0,8) == "--mkdir=") {
+		if($thisopt[7] == "=") {
+			$mkdir = trim(substr($thisopt,8));
+		} else {
+			$mkdir = $_SERVER['argv'][$gci+1];
+			$skipnext = true;
+		}
+	} else if($thisopt == "--pdev" || substr($thisopt,0,7) == "--pdev=") {
+		if($thisopt[6] == "=") {
+			$lpr_spec = trim(substr($thisopt,7));
+		} else {
+			$lpr_spec = $_SERVER['argv'][$gci+1];
+			$skipnext = true;
+		}
+	} else if($thisopt == "-P") {
+		$ppp = $_SERVER['argv'][$gci+1];
+		list($p_param, $p_value) = explode("=",$ppp);
+		$p_param = trim($p_param);
+		$p_value = trim($p_value);
+
+		if(!isset($prparams[$p_param])) {
+			echo "Invalid printer parameter \'$p_param\'!\n\n";
+			pparam_help();
+		} else {
+			$prparams[$p_param] = $p_value;
+		}
+
+		$skipnext = true;
+
+		unset($p_param);
+		unset($p_value);
+	} else if($thisopt == "-Xb") {
+		$op_burn = true;
+	} else if($thisopt == "-Xc") {
+		$op_copy = true;
+	} else if($thisopt == "-Xp") {
+		$lpr_enabled = true;
+	} else if($thisopt == "--pparam?") {
+		pparam_help();
+	} else if($thisopt == "-h" || $thisopt == "--help" || $thisopt == "-?" || $thisopt[0] == "-") {
+		show_usage();
+	} else {
+		if(!$infile) {
+			$infile = $thisopt;
+		} else if(!$target) {
+			$target = $thisopt;
+		} else {
+			echo "Invalid command line syntax!\n\n";
+			show_usage();
+		}
+	}
+
+}
+
+if(!$infile) show_usage();
+if($op_copy && !$target) {
+	echo "You must specify a target when using the copy command!\n\n";
+	show_usage();
+}
+
+if($op_burn && $target) $device = $target;
+
+echo "************************************************************************\n\n";
+
+
+
+
+// test for programs availability
+
+// CDRDAO
+
+echo "${ANSI_MAG}CDRDAO${ANSI_OFF} --> ";
+
+$whereis = shell_exec("whereis cdrdao");
+list($prgname,$prgloc) = explode(" ",$whereis);
+
+if(strstr($prgloc,"cdrdao") == false) {
+        echo "${ANSI_RED}NOT AVAILABLE${ANSI_OFF}\n";
+	if($op_burn) {
+		install_suggest("cdrdao","cdrdao","sysutils/cdrdao");
+		exit(254);
+	}
+} else {
+        echo "${ANSI_GRN}OK${ANSI_OFF}\n";
+}
+unset($ver_out);
+
+
+
+// SoX -- aka: The swiss-army-knife of Linux Audio!
+
+echo "${ANSI_MAG}SoX${ANSI_OFF} --> ";
+
+$whereis = shell_exec("whereis sox");
+list($prgname,$prgloc) = explode(" ",$whereis);
+
+if(strstr($prgloc,"sox") == false) {
+	echo "${ANSI_RED}NOT AVAILABLE${ANSI_OFF}\n";
+} else {
+
+	// get SoX output
+	$sox_out = shell_exec("sox 2>&1");
+
+	// break it down to a single line to make the regex easier
+	$sox_out = str_replace(array("\r","\n","\t")," ", $sox_out);
+
+	// get a list of available audio formats
+	preg_match("/AUDIO FILE FORMATS\: ([^A-Z]+) PLAYLIST/",$sox_out,$matchbook);
+	$sox_formats = explode(" ",$matchbook[1]);
+
+	// add to lookup table
+	foreach($sox_formats as $thisform) {
+		$fmt_lut[trim($thisform)][] = "sox";
+	}
+
+	// get program location
+	$prog_lut['sox'][0] = $prgloc;
+	if($resample) {
+		$prog_lut['sox'][1] = Array("-q","--clobber","%in","%out","rate","-v","44.1k","norm");
+	} else {
+		$prog_lut['sox'][1] = Array("-q","-V1","--clobber","%in","%out");
+	}
+
+	echo "${ANSI_GRN}OK${ANSI_OFF} (${ANSI_CYN}".count($sox_formats)." formats supported${ANSI_OFF})\n";
+}
+
+
+
+// LAME
+
+echo "${ANSI_MAG}LAME${ANSI_OFF} --> ";
+
+$whereis = shell_exec("whereis lame");
+list($prgname,$prgloc) = explode(" ",$whereis);
+
+if(strstr($prgloc,"lame") == false) {
+	echo "${ANSI_RED}NOT AVAILABLE${ANSI_OFF}\n";
+	//exit(201);
+} else {
+
+	// add supported formats to LUT
+	$fmt_lut['mp1'][] = "lame";
+	$fmt_lut['mp2'][] = "lame";
+	$fmt_lut['mp3'][] = "lame";
+        
+	// get program location
+	$prog_lut['lame'][0] = $prgloc;
+	$prog_lut['lame'][1] = Array("--decode","--brief","%in","%out");
+
+	echo "${ANSI_GRN}OK${ANSI_OFF}\n";
+}
+unset($ver_out);
+
+
+// FLAC
+
+echo "${ANSI_MAG}FLAC${ANSI_OFF} --> ";
+
+$whereis = shell_exec("whereis flac");
+list($prgname,$prgloc) = explode(" ",$whereis);
+
+if(strstr($prgloc,"flac") == false) {
+	echo "${ANSI_RED}NOT AVAILABLE${ANSI_OFF}\n";
+        //exit(202);
+} else {
+
+	// add supported formats to LUT
+	$fmt_lut['flac'][] = "flac";
+	$fmt_lut['fla'][] = "flac";
+        
+	// get program location
+	$prog_lut['flac'][0] = $prgloc;
+	$prog_lut['flac'][1] =  Array("-d","-f","-o","%out","%in");
+
+        echo "${ANSI_GRN}OK${ANSI_OFF}\n";
+}
+unset($ver_out);
+
+
+// FAAD
+
+echo "${ANSI_MAG}FAAD${ANSI_OFF} --> ";
+
+$whereis = shell_exec("whereis faad");
+list($prgname,$prgloc) = explode(" ",$whereis);
+
+if(strstr($prgloc,"faad") == false) {
+	echo "${ANSI_RED}NOT AVAILABLE${ANSI_OFF}\n";
+        //exit(203);
+} else {
+
+	// add supported formats to LUT
+	$fmt_lut['m4a'][] = "faad";
+	$fmt_lut['mp4'][] = "faad";
+	$fmt_lut['aac'][] = "faad";
+        
+        // get program location
+        $prog_lut['faad'][0] = $prgloc;
+	$prog_lut['faad'][1] = Array("-o","%out","%in");
+
+        echo "${ANSI_GRN}OK${ANSI_OFF}\n";
+}
+unset($ver_out);
+
+
+/*
+  MAC
+
+  mac is a tool written by a fellow named Matthew T. Ashland.
+  It encodes/decodes Monkey's Audio (APE) files.
+
+  Check out this page:
+  <http://aidanjm.wordpress.com/2007/01/26/using-monkeys-audio-ape-files-in-ubuntu/>
+
+*/
+
+echo "${ANSI_MAG}mac${ANSI_OFF} --> ";
+
+$whereis = shell_exec("whereis mac");
+list($prgname,$prgloc) = explode(" ",$whereis);
+
+if(strstr($prgloc,"mac") == false) {
+        echo "${ANSI_RED}NOT AVAILABLE${ANSI_OFF}\n";
+        //exit(203);
+} else {
+
+        // add supported formats to LUT
+        $fmt_lut['ape'][] = "mac";
+
+        // get program location
+        $prog_lut['mac'][0] = $prgloc;
+	$prog_lut['mac'][1] = Array("%in","%out","-d");
+
+        echo "${ANSI_GRN}OK${ANSI_OFF}\n";
+}
+unset($ver_out);
+
+
+// FFmpeg
+
+// ffmpeg module name to file ext conversion
+$ffmpeg_conv = array(
+	"8svx_exp" => "8svx",
+	"aac" => "aac",
+	"ac3" => "ac3",
+	"adpcm_adx" => "adx",
+	"alac" => "alac",
+	"als" => "als",
+	"amrnb" => "amrnb",
+	"ape" => "ape",
+	"atrac1" => "atrac",
+	"atrac3" => "atrac3",
+	"binkaudio_dct" => "dct",
+	"binkaudio_rdft" => "rdft",
+	"cook" => "cook",
+	"dca" => "dca",
+	"eac3" => "eac3",
+	"flac" => "flac",
+	"g726" => "g726",
+	"imc" => "imc",
+	"interplay_dpcm" => "dpcm",
+	"libgsm" => "gsm",
+	"libspeex" => "speex",
+	"mace3" => "mace",
+	"mlp" => "mlp",
+	"mp1" => "mp1",
+	"mp2" => "mp2",
+	"mp3" => "mp3",
+	"mpc7" => "mpc",
+	"mpc8" => "mpp",
+	"nellymoser" => "flv",
+	"pcm_alaw" => "alaw",
+	"qcelp" => "qcp",
+	"qdm2" => "qdm",
+	"real_144" => "ra",
+	"real_288" => "ram",
+	"roq_dpcm" => "dpcm",
+	"shorten" => "shn",
+	"sipr" => "sipr",
+	"smackaud" => "smk",
+	"tta" => "tta",
+	"vmdaudio" => "vmd",
+	"vorbis" => "vorbis",
+	"wavpack" => "wv",
+	"wmav1" => "wma",
+	"wmav2" => "asf",
+	"ws_snd1" => "snd1"	
+);
+
+
+echo "${ANSI_MAG}FFmpeg${ANSI_OFF} --> ";
+
+$whereis = shell_exec("whereis ffmpeg");
+list($prgname,$prgloc) = explode(" ",$whereis);
+
+if(strstr($prgloc,"ffmpeg") == false) {
+        echo "${ANSI_RED}NOT AVAILABLE${ANSI_OFF}\n";
+        //exit(203);
+} else {
+
+	// get FFmpeg output
+	exec("ffmpeg -codecs 2>/dev/null",$ff_out);
+
+	$ffmatches = 0;
+	// get a list of available audio formats
+	foreach($ff_out as $kk => $thiscode) {
+		if($kk < 10 || $thiscode[0] != " ") continue;
+
+		unset($matchbook);
+
+		//         Decode Encode  Vid/Aud/Sub  ???    ???    ??? modname  Description
+		//              1      2      3        4      5      6      7     8
+		preg_match("/^ ([D| ])([E| ])([V|A|S])([S| ])([D| ])([T| ]) (.+?) (.+)$/",$thiscode,$matchbook);
+		$decode = ($matchbook[1] == "D" ? true : false);
+		$audio  = ($matchbook[3] == "A" ? true : false);
+		$codec_code = trim($matchbook[7]);
+
+		if(!$audio || !$decode) continue;
+		if(!$ffmpeg_conv[$codec_code]) continue;
+
+		$mtype = $ffmpeg_conv[$codec_code];
+		$fmt_lut[$mtype][] = "ffmpeg";
+		$ffmatches++;
+	}
+
+        // get program location
+        $prog_lut['ffmpeg'][0] = $prgloc;
+	$prog_lut['ffmpeg'][1] = Array("-i","%in","%out");
+
+        echo "${ANSI_GRN}OK${ANSI_OFF} (${ANSI_CYN}$ffmatches codecs supported${ANSI_OFF})\n";
+}
+unset($ver_out);
+
+
+
+/*
+echo "\n\n";
+echo "Available decoders:\n";
+print_r($prog_lut);
+echo "\n\n";
+echo "Available codecs:\n";
+print_r($fmt_lut);
+echo "\n\n";
+exit();
+*/
+
+
+echo "${ANSI_MAG}Using temporary directory [${ANSI_CYN}$outtmp${ANSI_MAG}]${ANSI_OFF} --> ";
+if(!file_exists($outtmp)) {
+	if(!mkdir($outtmp)) {
+		echo "${ANSI_RED}FAIL!${ANSI_OFF} Unable to create. Check permissions.\n\n";
+		exit(254);
+	}
+}
+if(!is_writable($outtmp)) {
+	echo "${ANSI_RED}FAIL!${ANSI_OFF} Not writable. Check permissions.\n\n";
+	exit(254);
+}
+echo "${ANSI_GRN}OK!${ANSI_OFF}\n";
+
+
+echo "${ANSI_MAG}Reading playlist [${ANSI_CYN}$infile${ANSI_MAG}]${ANSI_OFF} --> ";
+dbpl_load($infile);
+echo "${ANSI_GRN}OK!${ANSI_OFF} (${ANSI_CYN}".count($cdex)." tracks${ANSI_OFF})\n";
+
+
+/******* op_burn - Burn an audio cd (CD-DA) *******/
+
+if($op_burn) {
+
+	echo "${ANSI_MAG}Converting audio files${ANSI_OFF} --> ${ANSI_GRN}  0%";
+
+	// start cue file. specify CDDA
+	$cue = "CD_DA\n";
+
+	$tot_tracks = count($cdex);
+
+	foreach($cdex as $kk => $thistrk) {
+
+		$fftrk = trim($thistrk['fname']);
+
+		// detect filetype/ext and convert appropriately
+		preg_match("/\.([a-zA-Z0-9]{1,6})$/",$fftrk,$matchy);
+
+		$ext = strtolower($matchy[1]);
+
+		if(!isset($fmt_lut[$ext])) {
+			echo "No handler for type \"$ext\"! Skipping this file.\n";
+			continue;
+		}
+
+		$handler = $fmt_lut[$ext][0];
+		$conv_cmd = $prog_lut[$handler][0];
+		$conv_params = $prog_lut[$handler][1];
+
+		// insert filenames into parameter array
+		foreach($conv_params as $cpi => $tparam) {
+			if($tparam == "%in") $conv_params[$cpi] = $fftrk;
+			else if($tparam == "%out") $conv_params[$cpi] = "$outtmp/$kk.wav";
+		}
+
+
+		// all of PHP's exec() functions are shit.
+		// we have to use pcntl_* functions to _fork() and _exec()
+		// because exec apparently won't pass a commandline > 128 bytes??? WTF
+
+		//echo "\n[${ANSI_MAG}$ext:$handler${ANSI_OFF}]\n";
+
+		if(!$no_conv) {
+			$pid = pcntl_fork();
+			if(!$pid) pcntl_exec($conv_cmd,$conv_params);
+			//sleep(1);
+			pcntl_waitpid(-1,$status);	// wait for the kid to finish
+		}
+
+		// append CUE info for this track
+		$cue .= "TRACK AUDIO\n";
+		if($pregap > 0) $cue .= "PREGAP 00:".sprintf("%02d",$pregap).":00\n";
+		$cue .= "FILE \"$outtmp/$kk.wav\" 0\n";
+
+		echo $ANSI_B4;
+		printf("%3d%%",intval((($kk+1)/$tot_tracks)*100));
+
+	}
+
+	echo "${ANSI_B4}OK   ${ANSI_OFF}\n";
+
+	// write CUE file
+	echo "${ANSI_MAG}Writing CUE file${ANSI_OFF} --> ";
+	$fp = fopen($outtmp."/toc","w");
+	fwrite($fp,$cue);
+	fclose($fp);
+	echo "${ANSI_GRN}OK!${ANSI_OFF}\n";
+
+	// burn it!
+	if(!$dry) {
+		// build parameters
+		$bspd = "--speed $cd_speed ";
+		if($device) $bspd .= "--device $device ";
+		if(!$no_eject) $bspd .= "--eject ";
+
+		echo "${ANSI_MAG}Burning CD...${ANSI_OFF}\n\n";
+		$burncmd = "cdrdao write $bspd\"$outtmp/toc\"";
+		echo "execute: ${ANSI_CYN}$burncmd${ANSI_OFF}\n\n";
+		exec($burncmd);
+		echo "\n";
+	}
+
+
+
+/******* op_copy - Copy files to another location or device *******/
+} else if($op_copy) {
+
+	// get realpath and make sure it's a directory!
+	$rp = realpath($target);
+	if(!is_dir($rp)) {
+		echo "*** Error: Target [$rp] is not a directory!\n\n";
+		exit(255);
+	}
+
+	// ensure the target is writable
+	if(!is_writable($rp)) {
+		echo "*** Error: No write access to target.\n\n";
+		exit(200);
+	}
+
+	// process --mkdir option for auto subdir creation
+	if($mkdir) {
+		if(!file_exists($rp."/".$mkdir)) {
+			$rp .= "/".$mkdir;
+			if(!mkdir($rp)) {
+				echo "*** Error: failed to create directory [$rp] using --mkdir option!\n\n";
+				exit(255);
+			}
+			$rp = realpath($rp);
+		} else if(!is_dir($rp."/".$mkdir)) {
+			echo "*** Error: name specified by --mkdir option already exists as a regular or special filename!\n\n";
+			exit(255);
+		} else {
+			$rp = realpath($rp."/".$mkdir);
+		}
+	}
+
+	echo "${ANSI_MAG}Copying to target [${ANSI_CYN}$rp${ANSI_MAG}]${ANSI_OFF} --> ${ANSI_GRN}  0%";
+
+	$tot_tracks = count($cdex);
+
+	foreach($cdex as $kk => $thistrk) {
+
+		$fname = trim($thistrk['fname']);
+
+		// strip path from filename
+		preg_match("/([^\/]+)$/i",$fname,$mmatt);
+		$tfile = $mmatt[1];
+
+		// convert spaces to underscores if --spcx switch is used
+		if($space_conv) {
+			$tfile = str_replace(" ","_",$tfile);
+		}
+
+		// if no clobber is set, skip this file and don't touch it
+		// (useful for updating/syncing -- speeds up process!)
+		if($no_clob && file_exists($rp."/".$tfile)) {
+			echo $ANSI_B4;
+			printf("%3d%%",intval((($kk+1)/$tot_tracks)*100));
+			continue;
+		}
+
+		// do the damn thing!
+		if(!copy($fname,$rp."/".$tfile)) {
+			// wait 3 seconds, then retry
+			sleep(3);
+			if(!copy($fname,$rp."/".$tfile)) {
+				echo "${ANSI_OFF}\n\n*** Error: failed to copy source file [$fname] to target file [$rp/$tfile]!\n\n";
+				exit(199);
+			}
+		}
+
+		echo $ANSI_B4;
+		printf("%3d%%",intval((($kk+1)/$tot_tracks)*100));
+
+	}
+
+	echo "${ANSI_B4}OK   ${ANSI_OFF}\n";
+}
+
+
+
+/*
+
+    [18] => Array
+        (
+            [fname] => /mnt/fattie/music/_VA/O Brother Where Art Thou/OST - The Stanley Brothers - Angel Band.mp3
+            [decoder] => stdmpg
+            [tracknum] => 0
+            [samplestart] => 
+            [endsample] => 
+            [duration] => 135.78448486328
+            [replaygain_album_gain] => 0
+            [replaygain_album_peak] => 1
+            [replaygain_track_gain] => 0
+            [replaygain_track_peak] => 1
+            [_flags] => 0
+            [track] => 19
+            [year] => 2001
+            [genre] => Country
+            [album] => O Brother Where Art Thou
+            [title] => The Stanley Brothers / Angel Band
+            [artist] => OST
+        )
+
+
+*/
+
+/******* lpr_enabled - Print a label or track listing *******/
+
+if($lpr_enabled) {
+
+	$lpspx = ($lpr_spec ? $lpr_spec : "default printer");
+	echo "${ANSI_MAG}Printing listing to ${ANSI_CYN}$lpspx${ANSI_OFF} --> ";
+
+
+	// if output type is 'text'...
+
+
+	// if no title is set, use the default title for normal albums
+	//if(!$prparams['title'] && $prparams['albtype'] == "normal") $prparams['title'] = $cdex[0]['artist']." - ".$cdex[0]['album']." ".($cdex[0]['year'] ? "(".$cdex[0]['year'].")" : "");
+	$prparams['title'] = $cdex[0]['artist']." - ".$cdex[0]['album']." ".($cdex[0]['year'] ? "(".$cdex[0]['year'].")" : "");
+
+
+
+	// begin output generation...
+	$repout  = $prparams['title']."\n\n";
+
+	foreach($cdex as $kk => $thistrk) {
+	
+		print_r($thistrk);
+	
+		if($prparams['albtype'] == "normal") $trk_name = $thistrk['title'];
+		else if($prparams['albtype'] == "mix") $trk_name = $thistrk['artist']." - ".$thistrk['title'];
+		//else $prparams
+		$repout .= sprintf("%02d. %s (%s)\n",($kk + 1),$trk_name['title'],format_duration($thistrk['duration']));
+
+	}
+
+	$repout .= "\n\n\n";
+	$repout .= "Generated by deadburn - $DBURN_VERSION\nhttp://jacobhipps.info/\n\n";
+
+	echo "[REPOUT] >>>\n\n";
+	echo $repout;
+	echo "\n\n<<REPOUT\n\n";
+
+
+	// set options if necessary...
+        if($prparams['type'] == "epl2") {
+                if($lpr_spec) {
+                	$ppd = "-p $lpr_spec";
+                	echo "[LPR_SPEC] ppd = '$ppd'\n";
+                }
+		else $ppd = "";
+				$lp_exec = "lpoptions $ppd -o Darkness=15 -o zePrintRate=1";
+				echo "[EXEC] lp_exec = '$lp_exec'\n";
+                exec($lp_exec);
+        }
+
+	if($lpr_spec) {
+		$ppd = "-P $lpr_spec";
+        echo "[LPR_SPEC] ppd = '$ppd'\n";
+	} else $ppd = "";
+
+	// pipe the listing to lpr so he can print it
+	$prinpiper = popen("lpr $ppd","w");
+	fwrite($prinpiper,$repout);
+	pclose($prinpiper);
+
+	echo "${ANSI_GRN}OK!${ANSI_OFF} (Spooled to printer)\n\n";
+}
+
+
+// clean up
+if(($op_burn || $op_conv) && !$keep_temp) {
+	echo "${ANSI_MAG}Removing temporary files${ANSI_OFF} --> ";
+	shell_exec("rm -R $outtmp");
+	echo "${ANSI_GRN}OK!${ANSI_OFF}\n";
+}
+
+echo "\n${ANSI_HI}${ANSI_YEL}Complete!${ANSI_OFF}\n\n";
+
+
+?>

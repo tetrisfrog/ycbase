@@ -1,0 +1,346 @@
+#!/usr/bin/php
+<?php
+
+error_reporting(E_ERROR);
+
+define("XTYPE_GET", "GET");
+define("XTYPE_POST","POST");
+
+define("ANSI_OFF",		"\033[m");
+define("ANSI_HI",		"\033[1m");
+define("ANSI_BLK",		"\033[30m");
+define("ANSI_RED",		"\033[31m");
+define("ANSI_GRN",		"\033[32m");
+define("ANSI_YEL",		"\033[33m");
+define("ANSI_BLU",		"\033[34m");
+define("ANSI_MAG",		"\033[35m");
+define("ANSI_CYN",		"\033[36m");
+define("ANSI_WHT",		"\033[37m");
+define("ANSI_B4",		"\033[4D");
+define("ANSI_CLRSCR",	"\033[2J");
+define("ANSI_CLRLINE",	"\033[K");
+
+
+$super_count = 0;
+$super_fsize = 0;
+
+$bparser  = Array(
+                	'section' => "/<ul class=\"scans\"[^>]*>(?<scantree>[\s\S]+)<\/ul>/",                	
+                	//'tags'  => "/(?<atag><a href=\"(?<aurl>[^\"]+)\"[^>]*>)(?:[\s\S]+?)(?<itag><img\s*src=\"(?<iurl>[^\"]+)\"[^>]*>)(?:[\s\S]*?/"
+                	'item'  => "/(?<atag><a href=\"(?<aurl>[^\"]+)\"[^>]*?>)\s*(?<itag><img\s*src=\"(?<iurl>[^\"]+)\")/"
+                 );
+
+$iparser  = Array(
+                  	'ptitle' => "/<h1>(?<pictitle>[^>]+)<\/h1>/i"
+                 );
+
+$xsr      = Array(
+                	'loc' => Array('static2','static3','view'),
+                	'rep' => Array('static','static','downloads')
+                  );
+
+
+
+$baseurl = "http://browse.minitokyo.net/gallery";
+$params  = Array(
+                	'tid' 	=> 5762,
+                	'index'	=> 3,
+                	'page'	=> 2
+                );
+
+$page_max					= 6;
+
+
+function fmt_fsize($fsintx) {
+
+	$fsint = intval($fsintx);
+
+	//printf("\n\t\t[[%d]]\n",$fsint);
+
+	if($fsint < 1024) {
+		// bytes
+		$outs = sprintf("%01d B",$fsint);
+	} else if($fsint < 1048576) {
+		// kilobytes
+		$outs = sprintf("%01.01f KB",(float)$fsint / (float)1024.0);
+	} else if($fsint < 1073741824) {
+		// megabytes
+		$outs = sprintf("%01.01f MB",(float)$fsint / (float)1048576.0);
+	} else if($fsint < 2^40) {
+		// gigabytes
+		$outs = sprintf("%01.02f GB",(float)$fsint / (float)(2^30));
+	} else {
+		// terabytes
+		$outs = sprintf("%01.03f TB",(float)$fsint / (float)(2^40));
+	}
+
+	return $outs;
+}
+
+function build_url($base, $xvars, $xtype=XTYPE_GET) {
+	$uout = $base;
+	$sep = "?";
+	if(is_array($xvars)) {
+		foreach($xvars as $vi => $vv) {
+			$uout .= $sep.$vi."=".urlencode($vv);
+			if($sep == "?") $sep = "&";
+		}
+	}
+	return $uout;
+}
+ 
+/*
+define("XTOK_CLEAR",  0);
+define("XTOK_ESCAPE", 1);
+define("XTOK_ENC",    2);
+define("XTOK_QUOTE",  4);
+
+function xli_tokenize($istr) {
+	$ilen = strlen($istr);
+
+	$ctok  = "";
+	$ctokl = 0;
+
+	$s_enc = false;
+	$s_esc = false;
+	$s_quote = false;
+	$s_tokd = false;
+
+	for($cp = 0; $cp < $ilen; $cp++) {
+		$cc = $istr[$cp];
+
+		//if($cc == '\\') $s_esc = true;
+		if($cc == '\'' || $cc == '\"') {
+			if($s_quote) {
+				$s_tokd = true;
+				$s_quote = false;
+			}
+		}
+
+		if($s_tokd) {
+			$toklist[] = $ctok;
+			$s_tokd = false;
+		}
+	}
+}
+*/
+
+function parse_page($purl, $fexpx) {
+	global $optmode;
+	global $super_count;
+	global $super_fsize;
+
+	echo(ANSI_WHT."[ ".ANSI_CYN.$purl.ANSI_WHT." ] ".ANSI_YEL."Fetching page... ".ANSI_OFF);
+	if(($rpin = file_get_contents($purl)) === false) {
+		echo(ANSI_RED."Failure. file_get_contents() returns false!".ANSI_OFF."\n");
+		return false;
+	}
+	echo(ANSI_GRN."OK! Got ".ANSI_CYN.strlen($rpin).ANSI_GRN." bytes\n");
+
+	/*
+	echo "Got [$purl], length ".strlen($rpin)." bytes.\n";
+	echo "\n>>>>> vvv\n\n";
+	echo $rpin;
+	eo "\n<<<<< ^^^\n\n";
+	*/
+
+	echo(ANSI_WHT."[ ".ANSI_CYN.$purl.ANSI_WHT." ] ".ANSI_YEL."Parsing... ".ANSI_OFF);
+
+	if(!preg_match($fexpx['section'], $rpin, $sec_match)) {
+		echo(ANSI_RED."Failure. preg_match(section) returns false!".ANSI_OFF."\n");
+		return false;
+	}
+
+	//print_r($sec_match['scantree']);
+
+	$xdom = new DOMDocument();
+	$xdom->loadHTML($sec_match['scantree']);
+
+	$xtree = str_replace(Array("<p>","<p/>","<li>","\t","\n","\r","  "),"",str_replace("</li>","|",$xdom->saveXML()));
+
+	//echo $xtree;
+
+	if(!preg_match_all($fexpx['item'], $xtree, $stree, PREG_SET_ORDER)) {
+		echo(ANSI_RED."Failure. preg_match_all(item) returns false!".ANSI_OFF."\n");
+		return false;
+	}
+
+	$img_parse_count = count($stree);
+
+	echo(ANSI_GRN."OK! Added ".ANSI_CYN.$img_parse_count.ANSI_GRN." entries to the dex!\n".ANSI_OFF);
+
+	//print_r($stree);
+
+
+	echo(ANSI_WHT."[ ".ANSI_CYN.$purl.ANSI_WHT." ] ".ANSI_YEL."Performing HEAD requests... ".ANSI_OFF);
+	$pso = Array();
+
+	$img_tot_count = 0;
+	$img_tot_bytes = 0;
+
+	foreach($stree as $si => $sx) {
+		unset($phead);
+
+		$pso[$si]['aurl'] = $sx['aurl'];
+		$pso[$si]['iurl'] = $sx['iurl'];
+		//$pso[$si]['surl'] = $sx['surl'];
+		//$pso[$si]['stitle'] = $sx['stitle'];
+		$pso[$si]['index_page_url'] = $purl;
+		$pso[$si]['index_page_order'] = $si;
+		$pso[$si]['fullimg'] = str_replace(Array("static2","static3"),"static",str_replace("thumbs","downloads",$pso[$si]['iurl']));
+
+		if($optmode['headreq']) {
+			http_head($pso[$si]['fullimg'],array('timeout'=>1,'referer'=>$purl),$phead);
+
+			$pso[$si]['img_http_resp'] = $hres = $phead['response_code'];
+			$pso[$si]['img_mtime'] = $phead['filetime'];
+			$pso[$si]['img_filesize'] = $phead['content_length_download'];
+			$pso[$si]['img_mime'] = $phead['content_type'];
+		
+
+			if($hres == 200 || $hres == 301 || $hres == 302) {
+				$pso[$si]['enabled'] = true;
+				$img_tot_count++;
+				$img_tot_bytes += $pso[$si]['img_filesize'];
+			} else {
+				$pso[$si]['enabled'] = false;
+			}
+
+			$super_count += $img_tot_count;
+			$super_fsize += $img_tot_bytes;
+
+		} else {
+
+			$pso[$si]['enabled'] = true;
+		}
+	}
+
+	if($optmode['headreq']) {
+		$img_fails = ($img_parse_count - $img_tot_count);
+		if($img_fails) $ifail_msg = "$img_tot_count files stat'd OK, ".ANSI_RED."$img_fails returned errors.";
+		else $ifail_msg = "It's all good!";
+		echo(ANSI_GRN.$ifail_msg.ANSI_GRN." -- total data, ".ANSI_CYN. fmt_fsize($img_tot_bytes) ."\n".ANSI_OFF);
+	} else {
+		echo(ANSI_RED."Disabled\n".ANSI_OFF);
+	}
+
+	return $pso;
+}
+
+
+$olist = Array(
+				'short' => "o:p:P:i:t:m:waDpP",
+               	'long' =>  Array(
+               	                 	'output:',
+               	                 	'wget',
+               	                 	'aria',
+               	                 	'dump',
+               	                 	'nohead',
+               	                 	'page:',
+               	                 	'pagemax:',
+               	                 	'index:',
+               	                 	'tid:',
+               	                 	'mode:'
+               	                )
+               );
+
+
+$copt = getopt($olist['short'],$olist['long']);
+
+// output type
+if(isset($copt['w']) || isset($copt['wget'])) $output_type = "wget";
+else if(isset($copt['a']) || isset($copt['aria'])) $output_type = "aria";
+else if(isset($copt['m']) || isset($copt['mode'])) $output_type = ($copt['m'] ? $copt['m'] : $copt['mode']);
+else $output_type = "dump";
+echo(ANSI_WHT."[ ".ANSI_YEL."Output Type".ANSI_WHT." = ".ANSI_CYN.$output_type.ANSI_WHT." ]".ANSI_OFF."\n");
+
+// dump flag
+if(isset($copt['D']) || isset($copt['dump'])) $optmode['dump'] = true;
+else $optmode['dump'] = false;
+if($optmode['dump']) echo(ANSI_WHT."[ ".ANSI_YEL."dump mode".ANSI_WHT." = ".ANSI_CYN."true".ANSI_WHT." ]".ANSI_OFF."\n");
+
+// page
+if(isset($copt['p']) || isset($copt['page'])) $params['page'] = ($copt['p'] ? $copt['p'] : $copt['page']);
+else $params['page'] = 1;
+echo(ANSI_WHT."[ ".ANSI_YEL."start page".ANSI_WHT." = ".ANSI_CYN.$params['page'].ANSI_WHT." ]".ANSI_OFF."\n");
+
+// pagemax
+if(isset($copt['P']) || isset($copt['pagemax'])) $optmode['pagemax'] = ($copt['P'] ? $copt['P'] : $copt['pagemax']);
+else $optmode['pagemax'] = 250;
+if($optmode['pagemax'] != 250) echo(ANSI_WHT."[ ".ANSI_YEL."pagemax".ANSI_WHT." = ".ANSI_CYN.$optmode['pagemax'].ANSI_WHT." ]".ANSI_OFF."\n");
+
+// index
+if(isset($copt['i']) || isset($copt['index'])) $params['index'] = ($copt['i'] ? $copt['i'] : $copt['index']);
+else $params['index'] = 3;
+echo(ANSI_WHT."[ ".ANSI_YEL."index".ANSI_WHT." = ".ANSI_CYN.$params['index'].ANSI_WHT." ]".ANSI_OFF."\n");
+
+// nohead
+if(isset($copt['nohead'])) {
+	$optmode['headreq'] = false;
+	echo(ANSI_WHT."[ ".ANSI_YEL."HEAD requests ".ANSI_CYN."disabled".ANSI_WHT." ]".ANSI_OFF."\n");
+} else {
+	$optmode['headreq'] = true;
+}
+
+// tid
+if(isset($copt['t']) || isset($copt['tid'])) {
+	$params['tid'] = ($copt['t'] ? $copt['t'] : $copt['tid']);
+} else {
+	echo(ANSI_RED."TID is required! Please specify using -t or --tid flags!".ANSI_OFF."\n");
+	exit(255);
+}
+echo(ANSI_WHT."[ ".ANSI_YEL."tid".ANSI_WHT." = ".ANSI_CYN.$params['tid'].ANSI_WHT." ]".ANSI_OFF."\n");
+
+// filename for output
+if(isset($copt['o']) || isset($copt['output'])) {
+	$optmode['output'] = ($copt['o'] ? $copt['o'] : $copt['output']);
+} else {
+	echo(ANSI_RED."Output filename is required! Please specify using -o or --output flags!".ANSI_OFF."\n");
+	exit(255);
+}
+echo(ANSI_WHT."[ ".ANSI_YEL."output file".ANSI_WHT." = ".ANSI_CYN.$params['output'].ANSI_WHT." ]".ANSI_OFF."\n");
+
+
+for($x=0; $x < $optmode['pagemax']; $x++) {
+	if(($newkids = parse_page(build_url($baseurl,$params),$bparser)) === false) break;
+	$mxdex[] = $newkids;
+	$params['page']++;
+}
+
+
+echo(ANSI_WHT."[ ".ANSI_GRN."Enumeration complete".ANSI_WHT." ]".ANSI_YEL." Totals: ".ANSI_CYN.$super_count.ANSI_YEL." files, ".ANSI_CYN.fmt_fsize($img_tot_bytes) ."\n".ANSI_OFF);
+
+// list it!
+$listfile = $optmode['output'];
+$dumpfile = $optmode['output'].".dump";
+
+echo "Creating wget list file [$listfile]\n";
+
+if(($ohand = fopen($listfile,"w")) === FALSE) {
+	echo "failed to write list file!\n";
+} else {
+	//fprintf($ohand,"# Compilation time -- %s\n",date("r"));
+	//fprintf($ohand,"# Total files : %d\n",$super_count);
+	//fprintf($ohand,"# Total size  : %d bytes (%s)\n",$super_fsize,fmt_fsize($super_fsize));
+	foreach($mxdex as $pdex) {
+		foreach($pdex as $zimg) {
+			fprintf($ohand,"%s\n",$zimg['fullimg']);
+		}
+	}
+	fclose($ohand);
+}
+
+// dump it!
+if($getopt['dump']) {
+	echo "Dumping data to [$dumpfile]\n";
+
+	if(($ohand = fopen($dumpfile,"w")) === FALSE) {
+		echo "failed to write dump file!\n";
+	} else {
+		fprintf($ohand,"********************\n".date("r")."********************\n");
+		fprintf($ohand,"%s",print_r($mxdex,true));
+		fclose($ohand);
+	}
+}
+
+?>

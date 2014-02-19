@@ -1,0 +1,169 @@
+#!/usr/bin/php
+<?php
+/**
+ **%%YCDOC*********************************************************************
+ * 
+ * yc_mudc - YC MACupd Client
+ * 
+ * Listens on a local UDP port using the Sockets API to gather information from
+ * the macupd (MAC Up Daemon) running on DD-WRT or related router firmware.
+ * This allows the client to determine client and device movement and connectivity
+ * status. The system DNS resolver, hosts file (/etc/hosts), or a specified
+ * listing file can be used to perform hostname resolution and reporting.
+ *
+ * Copyright (c) 2013 Jacob Hipps - tetrisfrog@gmail.com
+ * http://jhipps.neoretro.net/
+ * 
+ * Started:	27 Dec 2013
+ * Updated: 27 Dec 2013
+ * Revision: r1
+ *
+ * 
+ * @package		neoretro\yellowcrescent
+ * @subpackage	yc_mudc
+ * @category	util,monitor,net-monitor,ddwrt,client
+ * @fullpkg		neoretro.yellowcrescent.yc_mudc
+ * @version		0.01.0
+ * @status		WIP
+ * @author		Jacob Hipps - tetrisfrog@gmail.com
+ * @copyright	Copyright (c) 2013 Jacob Hipps/Neo-Retro Group
+ * @license		GNU LGPLv3 - http://www.gnu.org/licenses/lgpl.html
+ *
+ * @depends		neoretro\yellowcrescent\yc_bstrap 
+ *
+ * @link		https://github.com/tetrisfrog/ycbase					YCCC Github page
+ * @link		https://neoretro.net/yccc/utils/yc_mudc/				YCCC - yc_mudc Man Page
+ * @link		http://jhipps.neoretro.net/yccc/net-utils/yc_mudc		YCCC Tracker - yc_mudc
+ *
+ *
+ **YCDOC%%********************************************************************/
+
+//error_reporting(E_ERROR);
+error_reporting(E_ALL);
+
+function ycxdef($cn,$cv,$icase=true) {
+	$GLOBALS[$cn] = $cv;
+	$GLOBALS['_YC']['_'][$cn] =& $GLOBALS[$cn];
+	define($cn,$cv,$icase);
+}
+
+function ycgdref($cn,&$cr) {
+	$GLOBALS['_YC'][$cn] =& $cr;
+}
+
+$GLOBALS['_YC']['zout'] = fopen('php://stdout','w');
+$lnet = "ringcraft.nrweb";
+
+$mstatls = file_get_contents("/home/jacob/jgateway.statics");
+//printf("mstatls = \n%s\n",print_r($mstatls,true));
+
+preg_match_all("/(?<ipaddr>[0-9.]{7,15}) (?<macaddr>[0-9a-fA-F:-]{17}) (?<hostname>[a-zA-Z0-9_-]+)/",$mstatls,$xln,PREG_SET_ORDER);
+
+//printf("xln = \n%s\n",print_r($xln,true));
+
+foreach($xln as $matchnum => $matchy) {
+	$hlist[$matchy['hostname']]['fqdn'] = $matchy['hostname'].".".$lnet;
+	$hlist[$matchy['hostname']]['mac'] = $matchy['macaddr'];
+	$hlist[$matchy['hostname']]['ipv4'] = $matchy['ipaddr'];
+}
+
+//zecho(print_r($hlist,true));
+//exit(0);
+
+
+$in_addr = '192.168.0.215';
+$in_port = '20500';
+$from_addr = '';
+$from_port = 0;
+
+$insock = socket_create(AF_INET, SOCK_DGRAM, SOL_UDP);
+socket_bind($insock, $in_addr, $in_port);
+
+/*
+((?<item_host>(?:\s+)(?<itemnum_1>[0-9]{1,2})(?:\s+)(?<ipaddr_2>[0-9\.]{8,18})(?:\s+)(?<unk_3>[0-9a-fA-Fx]{2,10})(?:\s+)(?<unk_4>[0-9a-fA-Fx\*\-\:]{3,10})(?:\s+)(?<mac_5>[a-fA-F0-9\:\-\.\*]+)(?:\s+)(?<unk_6>[^ ]+)(?:\s+)(?<iface_7>[a-zA-Z0-9-_]+))|(?<item_wlansig>(?:\s+)(?<itemnum_1>[0-9]{1,2})(?:\s+)(?<label_2>[a-zA-Z0-9\-\_\.\*]{1,18})(?:\s+)(?<unk_3>[0-9\+\-\.]{1,10})(?:\s+)(?<unk_4>[0-9\+\-\.]{1,10})(?:\s+)(?<bssid_5>[a-fA-F0-9\:\-\.\*]+)(?:\s+)(?<statx_6>[^ ]+)(?:\s+)(?<iface_7>[a-zA-Z0-9-\:\-_\+\*\!\@\~\$\%\^]+)))
+ */
+
+while(socket_recvfrom($insock, $inbuf, 1000, MSG_WAITALL, $from_addr, $from_port)) {
+	unset($matchy);
+
+	echo "inbuf = [$inbuf]\n\n";
+	//  1    192.168.0.166    0x1         0x2         A4:67:06:E9:19:EA     *        br0
+	$matey = '/(?J)((?<type_hostbeacon>(?:\s+)(?<1_inum>[0-9]{1,2})(?:\s+)(?<2_ipaddr>[0-9\.]{8,18})(?:\s+)(?<3_ualpha>[0-9a-fA-Fx]{2,10})(?:\s+)(?<4_ubeta>[0-9a-fA-Fx\*\-\:]{3,10})(?:\s+)(?<5_hmac>[a-fA-F0-9\:\-\.\*]+)(?:\s+)(?<6_ucharlie>[^ ]+)(?:\s+)(?<7_iface>[a-zA-Z0-9-_]+))|(?<type_wifisig>(?:\s+)(?<1_inum>[0-9]{1,2})(?:\s+)(?<2_statname>[a-zA-Z0-9\-\_\.\*]{1,18})(?:\s+)(?<3_ualpha>[0-9\+\-\.]{1,10})(?:\s+)(?<4_ubeta>[0-9\+\-\.]{1,10})(?:\s+)(?<5_hmac>[a-fA-F0-9\:\-\.\*]+)(?:\s+)(?<6_xstat>[^ ]+)(?:\s+)(?<7_iface>[a-zA-Z0-9-\:\-_\+\*\!\@\~\$\%\^]+)))/';
+	
+	if(!preg_match_all($matey, $inbuf, $matchouts, PREG_SET_ORDER)) {
+		zlog('');
+	}
+
+	// Common kiddies
+	$xchan['num'] = $matchouts['1_inum'];
+	$xchan['hmac'] = $matchouts['5_hmac'];
+	$xchan['iface'] = $matchouts['7_iface'];
+
+	// <type_hostbeacon>
+	// 		<1_inum><2_ipaddr><3_ualpha><4_ubeta><5_hmac><6_ucharlie><7_iface>
+	if(isset($matchout['type_hostbeacon'])) {
+		$xchan['type'] = 'beacon';
+
+	// <type_wifisig>
+	// 		<1_inum><2_statname><3_ualpha><4_ubeta><5_hmac><6_xstat><7_iface>
+	} else if(isset($matchout['type_wifisig'])) {
+		$xchan['type'] = 'xstat';
+		//$xchan['stat'] = $matchout['
+	}
+
+	echo "matchouts: \n\t";
+	print_r($matchouts);
+	echo "\n**done**\n\n";
+}
+
+
+/*
+(?J)
+((?<type_hostbeacon>(?:\s+)
+	(?<1_inum>[0-9]{1,2})(?:\s+)(?<2_ipaddr>[0-9\.]{8,18})(?:\s+)(?<3_ualpha>[0-9a-fA-Fx]{2,10})(?:\s+)
+	(?<4_ubeta>[0-9a-fA-Fx\*\-\:]{3,10})(?:\s+)(?<5_hmac>[a-fA-F0-9\:\-\.\*]+)(?:\s+)(?<6_ucharlie>[^ ]+)(?:\s+)
+	(?<7_iface>[a-zA-Z0-9-_]+))
+(?<type_wifisig>(?:\s+)
+	(?<1_inum>[0-9]{1,2})(?:\s+)(?<2_statname>[a-zA-Z0-9\-\_\.\*]{1,18})(?:\s+)
+	(?<3_ualpha>[0-9\+\-\.]{1,10})(?:\s+)(?<4_ubeta>[0-9\+\-\.]{1,10})(?:\s+)(?<5_hmac>[a-fA-F0-9\:\-\.\*]+)(?:\s+)
+	(?<6_xstat>[^ ]+)(?:\s+)(?<7_iface>[a-zA-Z0-9-\:\-_\+\*\!\@\~\$\%\^]+)))
+ */
+
+class mdaddy {
+	public $xid;
+	public $uid;
+	public $meta = 	Array(
+	                      		'time' =>		Array(
+	                      		                 		'first' => 0,
+	                      		                 		'last' => 0,
+	                      		                 		'last-streak' => 0,
+	                      		                 		'last-delta' => 0
+	                      		                	 ),
+	                      		'listen' =>		NULL,
+	                      		'machine' =>	Array(
+	                      		                   		'ipaddr' => NULL,
+	                      		                   		'hmac' => NULL,
+	                      		                   		'id' => NULL,
+	                      		                   		'_misc' => NULL,
+	                      		                   	 ),
+	                      		'raw' =>		Array(
+	                      		                		'beacon' => NULL,
+	                      		                		'wifisig' => NULL,
+	                      		                	 ),
+	                      		'resolve' =>	Array(
+	                      		                   		'hostname' => NULL,
+	                      		                   		'ping' => NULL
+	                      		                   	),
+	                      		'pingcnt' =>	0
+	                     );
+
+	public function __construct($xid=false) {
+		$this->meta['time']['last'] = $this->meta['time']['first'] = microtime(true);
+		$uid = uniqid($xid);
+$		if(!$xid) 
+	}
+
+}
+
+
+?>

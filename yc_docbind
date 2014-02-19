@@ -1,0 +1,81 @@
+#!/usr/bin/php
+<?php
+/**
+ *****************************************************************************
+ * yc_docbind
+ * Take an entire group or directory of documents and convert to a single
+ * concatenated file of another format, such as PDF.
+ *
+ * Copyright (c) 2013 Jacob Hipps - tetrisfrog@gmail.com
+ * http://jhipps.neoretro.net/
+ *
+ * Started: 09 Oct 2013
+ * Updated: 09 Oct 2013
+ * Revision: 0
+ *
+ * @package		neoretro.yccc.docbind
+ * @subpackage	yc_docbind
+ * @category	docs
+ * @fullpkg		neoretro.yccc.utils.docs.docbind
+ * @version		0.01.0
+ * @author		Jacob Hipps - tetrisfrog@gmail.com
+ * @copyright	Copyright (c) 2013 Jacob Hipps/Neo-Retro Group
+ * @license		GNU LGPLv3 - http://www.gnu.org/licenses/lgpl.html
+ *
+ * @depends		yc_bstrap
+ *
+ * @link		https://github.com/tetrisfrog/yc_commonconfig		YCCC Github page
+ * @link		https://neoretro.net/yccc/							YCCC Home Page - Neo-Retro
+ * @link		http://jhipps.neoretro.net/yccc/util/yc_docbind		YCCC Tracker - yc_docbind
+ *
+ *****************************************************************************/
+
+$YC_SNAME = "yc_docbind";
+$YCS_INFO = 	Array(
+                   'name' => $YC_SNAME,
+                   'desc' => "yc_docbind - Build a single document from a group",
+                   'author' => "J. Hipps",
+                   'copyright' => "Copyright (c) 2013 J. Hipps",
+                   'website' => "http://neoretro.net/yc_docbind",
+                   'started' => "09 Oct 2013",
+                   'updated' => "09 Oct 2013",
+                   'revision' => 0,
+                   'deps' => 	Array(
+                                    'yc_bstrap' => Array('desc' => "YellowCrescent Common PHP Codebase", 'rev' => 0)
+								)
+				);
+
+$YC_CONSOLE = STDOUT;
+$YC_ERROUT = STDERR;
+$YC_BOOTSTRAP = realpath("./yc_bstrap");
+
+require_once($YC_BOOTSTRAP);
+
+function show_usage() {
+	global $GL_SNAME;
+	zecho("\n\n");
+	zecho($YCS_INFO['name']."\n");
+	zecho($YCS_INFO['desc']."\n");
+	zecho($YCS_INFO['copyright']."\n");
+	zecho($YCS_INFO['website']."\n\n");
+
+	zecho("Usage:\n");
+	zecho("\t$YC_SNAME [<mode>] [<options>] <part_id>\n\n");
+
+	zecho("\t\tModes:\n");
+	zecho("\t\t\ts[earch]\t\tSearch Octopart DB for part info [DEFAULT]\n");
+	zecho("\t\t\tp[df]\t\tGet PDF for part, if available\n");
+	zecho("\n");
+	zecho("\t\tOptions:\n");
+	zecho("\t\t\t-s\t\tSearch Octopart DB for part info [DEFAULT]\n");
+	
+	
+}
+
+if($argc < 2) {
+	show_usage();
+	exit(1);
+}
+
+
+?>

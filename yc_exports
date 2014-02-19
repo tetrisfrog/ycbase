@@ -1,0 +1,477 @@
+#!/usr/bin/php
+<?php
+/**
+ **%%YCDOC*********************************************************************
+ **%%vim: set modelines=40:
+ * 
+ * yc_exports - YC Exports Viewer
+ * YellowCrescent System & PHP Environment Examiner
+ * 
+ * Formats system environmental vars and PHP vars for display using
+ * ANSI/VT-100 compatible coloring. Also supports filtering and
+ * matching similar to the in-built `test` command of `sh` and `bash`
+ *
+ * Copyright (c) 2013 Jacob Hipps - tetrisfrog@gmail.com
+ * http://jhipps.neoretro.net/
+ * 
+ * Started:	15 Aug 2013
+ * Updated: 17 Dec 2013
+ * Revision: r10
+ *
+ * 
+ * @package		neoretro\yellowcrescent
+ * @subpackage	yc_exports
+ * @category	core-util,util,util-debug
+ * @fullpkg		neoretro.yellowcrescent.yc_exports
+ * @version		0.01.10
+ * @status		WIP
+ * @author		Jacob Hipps - tetrisfrog@gmail.com
+ * @copyright	Copyright (c) 2013 Jacob Hipps/Neo-Retro Group
+ * @license		GNU LGPLv3 - http://www.gnu.org/licenses/lgpl.html
+ * @param 		vim: set ts=4 sw=4 noexpandtab syntax=php:
+ *
+ * @depends		neoretro\yellowcrescent\yc_bstrap 
+ *
+ * @link		https://github.com/tetrisfrog/ycbase					YCCC Github page
+ * @link		https://neoretro.net/yccc/utils/yc_exports/				YCCC Home Page - Neo-Retro
+ * @link		http://jhipps.neoretro.net/yccc/core-utils/yc_bstrap	YCCC Tracker - yc_exports
+ *
+ *
+ **YCDOC%%********************************************************************/
+
+error_reporting(E_ERROR);
+
+function ycxdef($cn,$cv,$icase=true) {
+	$GLOBALS[$cn] = $cv;
+	$GLOBALS['_YC']['_'][$cn] =& $GLOBALS[$cn];
+	define($cn,$cv,$icase);
+}
+
+function ycgdref($cn,&$cr) {
+	$GLOBALS['_YC'][$cn] =& $cr;
+}
+
+$GLOBALS['_YC']['zout'] = fopen('php://stdout','w');
+
+/**
+ * ANSI Color tables
+ * Defines ANSI escape codes for changing console text color and clearing the screen
+ * 
+ */
+ycxdef("ANSI_OFF",	"\033[m");
+ycxdef("ANSI_HI",	"\033[1m");
+ycxdef("ANSI_BLK",	"\033[30m");
+ycxdef("ANSI_RED",	"\033[31m");
+ycxdef("ANSI_GRN",	"\033[32m");
+ycxdef("ANSI_YEL",	"\033[33m");
+ycxdef("ANSI_BLU",	"\033[34m");
+ycxdef("ANSI_MAG",	"\033[35m");
+ycxdef("ANSI_CYN",	"\033[36m");
+ycxdef("ANSI_WHT",	"\033[37m");
+ycxdef("ANSI_B4",	"\033[4D");
+ycxdef("ANSI_CLRSCR",	"\033[2J");
+ycxdef("ANSI_CLRLINE",	"\033[K");
+ycxdef("ANSI_HOME",		"\033[0;0f");
+ycxdef("ANSI_XCLEAR",	ANSI_CLRSCR.ANSI_CLRLINE.ANSI_HOME);
+
+
+function zecho($s) {
+	global $TX_OUTPUT;
+
+	if(!$TX_OUTPUT) $TX_OUTPUT = STDOUT;
+	fprintf($TX_OUTPUT,$s);
+}
+
+$YC_SNAME = "yc_exports";
+$YC_RELPATH = "./";
+$YCS_INFO = 	Array(
+                   'name' => $YC_SNAME,
+                   'desc' => "yc_exports",
+                   'author' => "J. Hipps",
+                   'copyright' => "Copyright (c) 2013 J. Hipps",
+                   'website' => "http://neoretro.net/",
+                   'started' => "15 Aug 2013",
+                   'updated' => " Aug 2013",
+                   'revision' => 0,
+                   'deps' => 	Array(
+                                    'yc_bstrap' => Array('desc' => "YellowCrescent Common PHP Codebase", 'rev' => 0)
+								)
+				);
+$YC_PDEX = 	Array(
+			'color_enable' => Array('env' => Array("YCEXPORT_color_enable","YCEXPORT_COLOR"), 'sopt' => '-C', 'soptN' => '-nC', 'lopt' => '--color')
+		);
+
+$GLOBALS['_YC']['ZIG'] = Array('basedir' => realpath(dirname($_SERVER['SCRIPT_FILENAME'])));
+
+//$YCBASE = (isset($_SERVER['YCBASE']) ? $_SERVER['YCBASE'] : $_SERVER['PWD']);
+//$YC_CONSOLE = STDOUT;
+//$YC_ERROUT = STDERR;
+
+// YC Bootstrap ////////////////////////////////////////////////
+
+// Required parameters
+// 		MAIN					Filename of YellowCrescent Bootstrap script (YCB) [*REQ]
+// 		BASE					Path to YCBASE directory. Will be resolved by realpath(),
+// 								thus it may be a relative or absolute path, with YCB caring
+// 								nigh the slightest.
+define('_YCB_MAIN','yc_bstrap');
+define('_YCB_RELPATH','./');
+
+//require_once(realpath(constant("_YCB_RELPATH").constant("_YCB_MAIN")));
+
+
+$YC_ARGFMT =	Array(
+						'CL_SNAME' => Array('req' => true, 'mainarg' => false, 'global' => true, 'aloc' => 0, 'regex' => '/^(?:([^ ]+)\/)?(?<CL_SNAME>[^ ]+)$/'),
+						'input_ts' => Array('req' => true, 'mainarg' => true, 'rloc' => 99, 'regex' => '/^(?<input_ts>-?[0-9]+(?:\.?(?<input_ts_frac>[0-9]*))?)$/', 'export_matches' => "named"),
+						'out_fmt'  => Array('req' => false, 'mainarg' => false, 'rloc' => 1, 'sflag' => 'f', 'lflag' => 'format', 'subargs' => 1 , 'regex' => "")
+					 );
+
+$YC_SRLZ =		Array(
+						'array' => Array('recurse' => true, ),
+						'boolean' => Array(0 => "0", 1 => "1", 'expand' => "%s=%01u"),
+						'integer' => Array('expand' => "%s=%u"),
+						'double' => Array('expand' => "%s='%f'"),
+						'string' => Array('transform' => function($sin) { return escapeshellarg($sin); },'expand' => "%s=\"%s\""),
+						'object' => false,
+						'resource' => false
+					 );
+
+
+$YC_ESCMAP =	Array(
+						0 => Array(
+									'match' => Array(
+														0 => Array('in' => '^\s*\\?\'\s*\\?\'\s*\$', 'out' => ''),
+														1 => Array('in' => '^\'(?<fullstr>(?:(?<strgood>[^\']+)|(?<sqfail>[^\']+[\'].*)))\'$', 'out' => '')
+													),
+
+									'callback' =>	function($xin,$zzdex) {
+														global $YC_ESCMAP;
+
+														$zin  = $YC_ESCMAP[$zzdex]['match'];
+														$zout = $YC_ESCMAP[$zzdex]['expand'];
+
+														if(isset($xin['sqfail'])) {
+															uniqid();
+															//preg_replace_callback($zin,$zout,
+														}
+													}
+									)
+					 );
+
+function escapebasharg(&$argin,$mod=false) {
+
+	$xin = trim($argin);
+
+	$xin_patty  = Array("^\'\'\$");
+	$xout_backy = Array( );
+
+	$xout = preg_replace_callback($xin_patty,$xout_backy,$argin);
+}
+
+function var2env(&$inv,$ikey,$imode=0) {
+	global $YC_SRLZ;
+
+	$vtx = gettype($inv);
+	switch($vtx) {
+		case "array":
+		case "boolean":
+			$outvar = ($inv ? "1" : "0");
+		default:
+			$itx = "";
+	}
+}
+
+function show_usage() {
+	global $GL_SNAME;
+	zecho("\n\n");
+	zecho($YCS_INFO['name']."\n");
+	zecho($YCS_INFO['desc']."\n");
+	zecho($YCS_INFO['copyright']."\n");
+	zecho($YCS_INFO['website']."\n\n");
+
+	zecho("Usage:\n");
+	zecho("\t$YC_SNAME <options> [unix_timestamp]\n\n");
+}
+
+define('YC_PSPEC_REQUIRED',		1<<0);
+define('YC_PSPEC_OPTIONAL',		1<<1);
+define('YC_PSPEC_ARRAY',		1<<2);
+define('YC_PSPEC_BOOL',			1<<3);
+define('YC_PSPEC_COMMA_DELIM',	1<<4);
+define('YC_PSPEC_SPACE_DELIM',	1<<5);
+
+$_YC['pspec'] = 	Array(
+                       		'filter'	=> Array('sopt' => 'f', 'lopt' => 'filter', 'param' => Array('fspec' => YC_PSPEC_REQUIRED)),
+                       		'color'		=> Array('sopt' => 'C', 'lopt' => Array('color','colour'), 'param' => Array('enable' => YC_PSPEC_OPTIONAL|YC_PSPEC_BOOL)),
+							'section'	=> Array('sopt' => 's', 'lopt' => Array('section','sec','array'), 'param' => Array('sspec' => YC_PSPEC_REQUIRED|YC_PSPEC_ARRAY|YC_PSPEC_COMMA_DELIM)),
+							'all'		=> Array('sopt' => Array('a','A'), 'lopt' => 'all')
+                    	 );
+
+$GLOBALS['getopt'] = getopt("f:g:",array('filter:','grep:',''));
+
+echo ">>>>> getopt:\n";
+print_r($getopt);
+echo ">>>>> argv:\n";
+print_r($argv);
+
+function yc_getopt() {
+	$pspec = $_YC['pspec'];
+	$optlist['go_sopt'] = "";
+	$optlist['go_lopt'] = Array();
+
+	// Build $optspec descriptor
+	foreach($pspec as $pname => $optspec) {
+		if(is_array($optspec['params'])) {
+			$go_spec = "";
+
+			// parameters
+			foreach($optspec['params'] as $optname => $optflags) {
+				$optlist['map'][$pname]['flags'] = $optflags;
+				$optlist['map'][$pname]['vmap'] = $optname;
+				if($optflags & YC_PSPEC_REQUIRED) $go_spec .= ":";
+				else if($optflags & YC_PSPEC_OPTIONAL) $go_spec .= "::";
+				$optlist['map'][$pname]['go_spec'] = $go_spec;
+			}
+
+			// short options
+			if(is_array($optspec['sopt'])) {
+				// process array list
+				foreach($optspec['sopt'] as $sov) {
+					$optlist['go_sopt'] .= $sov.$go_spec;
+				}
+			} else {
+				// process single string/option
+				$optlist['go_sopt'] .= $optspec['sopt'].$go_spec;
+			}
+
+			// long options
+			if(is_array($optspec['lopt'])) {
+				// process array list
+				foreach($optspec['lopt'] as $lov) {
+					$optlist['go_lopt'][] = $lov.$go_spec;
+				}
+			} else {
+				// process single string/option
+				$optlist['go_lopt'][] = $optspec['lopt'].$go_spec;
+			}
+		}
+	}
+
+	yc_getopt_parse($ospec);
+
+}
+
+
+define('YCX_FLAG',			1<<0);
+define('YCX_PARAMVAL',		1<<1);
+define('YCX_REQVAL',		1<<2);
+define('YCX_LOPT',			1<<3);
+define('YCX_SOPT',			1<<4);
+
+function yc_getopt_parse($ospec) {
+	$paramlist &= $GLOBALS['_YC']['cliargs'];
+
+	$GLOBALS['_YC']['_argv'] &= $argv;
+	$GLOBALS['_YC']['_argc'] &= $argc;
+	$GLOBALS['_YC']['_argn'] &= $argn;
+
+	//$go_out = getopt($ospec['sopt'],$ospec['lopt']);
+	
+	$zlast = false;
+	$zexpect = YCX_FLAG | YCX_REQVAL;
+
+	foreach($argv as $akk => $carg) {
+		foreach($carg as $ci => $cc) {
+			if($ci == 0 && $cc == '-' && ($zexpect & YCX_FLAG)) {
+				$zexpect = YCX_FLAG | YCX_SOPT;
+			} else if($ci == 1 && ($zexpect & YCX_FLAG)) {
+				$zexpect = YCX_LOPT;
+			} else if($ci == 0 && (($zexpect & YCX_PARAVAL) || ($zexpect & YCX_REQVAL))) {
+
+			} else if(($zexpect & YCX_SOPT) || ($zexpect & YCX_LOPT)) {
+				
+			}
+		}
+	}
+
+}
+
+/*
+if($argc < 2) {
+	show_usage();
+	exit(1);
+}
+*/
+
+zecho("\n$YC_SNAME:  ");
+zecho("\n\n");
+
+
+$relpath = "./";
+
+/*
+if(isset($_SERVER['YC_BASE'])) {
+	$GLOBAL['YCENV']['YC_BASE'] = $_SERVER['YC_BASE'];
+	foreach($_SERVER as $kk => $kval) {
+		if(preg_match("//",$kk) !== false)
+	}
+}
+*/
+
+$color_enable = true;
+
+if(isset($_SERVER['YCEXPORT_COLOR']) && $_SERVER['YCEXPORT_COLOR']) {
+	$color_enable = ($_SERVER['YCEXPORT_COLOR'] != "off" ? true : false);
+} else {
+	if(isset($argv[1]) && $argv[1] == "--nocolor") {
+		$color_enable = false;
+		unset($argv[1]);
+		$argc--;		
+	} else {
+		$color_enable = true;
+	}
+} 
+
+$glob_list = Array("_SERVER","_ENV","_REQUEST","_POST","_GET","_FILES","argv","GLOBALS");
+$x_filter = "";
+$x_filter_enable = false;
+$pwd = realpath("");
+
+echo $ANSI_OFF."\n\n";
+
+echo "Working from [ ".$ANSI_CYN.$pwd.$ANSI_OFF." ]\n\n";
+
+if($argc > 1) {
+	$x_filter = $argv[1];
+	$x_filter_enable = true;
+	echo "Filter is ON! Filter term [$x_filter]\n\n";
+}
+
+define('ZECHO_MODE_COLOR', 1);
+define('ZECHO_MODE_NOCOLOR', 2);
+define('ZECHO_MODE_NOCTRLCODES', 4);
+define('ZECHO_MODE_SILENT',  8);
+define('ZECHO_MODE_LVLPFX', 16);
+
+function zecho_vline($ddepth, $vline,
+                     $echomode=ZECHO_MODE_COLOR,
+                     $color_fill=ANSI_MAG, $color_ddep=ANSI_YEL, $color_sym=ANSI_WHT
+                    ) {
+
+	$lmargin_fillsym = ' '; $lmargin = 3;
+	$knot_sym = '+'; $fillw_offset = 1;
+	$fillw_branchsz = 8;
+	$branch_sym = '-'; $ledger_sz = 2;
+	$lmargin_bufzone = ' '; 
+	$feather_sym = '<';
+	$rmargin_fillsym = ' '; $rmargin = 2;
+
+	if($echomode & ZECHO_MODE_LVLPFX) $levelup = "$color_sym<$color_ddep%02d$color_sym>";
+	else $levelup = "";
+
+	if($echomode & ZECHO_MODE_NOCTRLCODES) $color_off = "";
+	else $color_off = ANSI_OFF;
+
+	if($echomode & ZECHO_MODE_SILENT) $outfile = NULL;
+	else $outfile = STDOUT;
+
+	if(!$fillsym) $fillsym = " ";
+	if($echomode & ZECHO_MODE_COLOR) {
+		if(!$color_fill) $color_sym = ANSI_MAG;
+		if(!$color_ddep) $color_sym = ANSI_YEL;
+		if(!$color_sym) $color_sym = ANSI_WHT;
+	} else if($echomode & ZECHO_MODE_NOCOLOR || $echomode & ZECHO_MODE_NOCTRLCODES) {
+		$color_fill = $color_ddep = $color_sym = $color_off;
+	}
+
+	$ldent = str_pad("",$lmargin,$lmargin_fillsym).str_pad("",($ddepth + $fillw_offset - $ledger_sz) * $fillw_branchsz,str_pad("|",$fillw_branchsz,$lmargin_bufzone)).$knot_sym.str_pad("",($fillw_branchsz * $ledger_sz),$branch_sym).$feather_sym.str_pad("",$rmargin,$rmargin_fillsym);
+	//if(!($echomode & ZECHO_MODE_SILENT)) fprintf($_YC['zout'],"$color_sym<$color_ddep%02d$color_sym>$color_fill%s$color_off%s",$ddepth,$ldent,$vline);
+	if(!($echomode & ZECHO_MODE_SILENT)) printf("${levelup}${color_fill}${ldent}${color_off}${vline}\n");
+	return $ldent;
+}
+
+function descend_list($glob_val,&$glob_ref=false) {
+	global $x_filter_enable, $x_filter;
+	static $slev = 0;
+
+	if($glob_ref === false) {
+		if(!isset($GLOBALS[$glob_val])) {
+			$topline = ANSI_WHT."[ \$".ANSI_CYN.$glob_val.ANSI_WHT." ] => ".ANSI_RED."NOT DEFINED".ANSI_OFF;
+			zecho_vline($slev,$topline);
+			$slev--;
+			return false;
+		}
+		$g_ref =& $GLOBALS[$glob_val];
+	} else {
+		$g_ref =& $glob_ref;
+	}
+
+	if(is_array($g_ref)) $g_count = count($g_ref);
+	else $g_count = 1;
+
+	$topline = ANSI_WHT."[ ".($slev > 0 ? "" : "\$").ANSI_CYN.$glob_val.ANSI_WHT." ] => ".ANSI_YEL.$g_count.ANSI_WHT." items".ANSI_OFF."";
+	zecho_vline($slev,$topline);
+
+	$slev++;
+
+	foreach($g_ref as $skey => $sval) {
+		$showme = false;
+
+		if($x_filter_enable) {
+			if(stripos($skey,$x_filter) !== false) {
+				$showme = true;
+			} else {
+				$showme = false;
+			}
+		} else {
+			$showme = true;
+		}
+
+		// remove escape char to prevent ANSI escape sequences
+		$eval = str_replace("\033","^[",$sval);
+		$ekey = (is_array($sval) ? "[$skey]" : $skey);
+		$ldent = str_pad("",$slev,"\t");
+
+		if($showme == true) {
+			if($slev > 1 && recur_detect($g_ref,$sval)) {
+				$topline = ANSI_WHT."*** ".ANSI_RED."(RECURSION)".ANSI_OFF."";
+				zecho_vline($slev,$topline);
+				break;
+			} else if(is_array($sval)) {
+				//echo  $ldent.ANSI_WHT."[ ".ANSI_CYN.$ekey.ANSI_WHT." ] => ".ANSI_RED."(Array)".ANSI_OFF."\n";
+				descend_list($skey,$sval);
+			} else {
+				$topline = ANSI_GRN."".$ekey." ".ANSI_WHT."= \"".ANSI_YEL.$eval.ANSI_WHT."\"";
+				zecho_vline($slev,$topline);
+			}
+		}
+	}
+
+	$slev--;
+
+	return true;
+}
+
+function recur_detect(&$a,&$b) {
+	if(gettype($a) !== gettype($b)) return false;
+	if(!is_array($a)) return false;
+	if(count($a) != count($b)) return false;
+
+	$a['___recur_detect'] = 1;
+	if(isset($b['___recur_detect'])) $res = true;
+	else $res = false;
+
+	unset($a['___recur_detect']);
+	return $res;
+}
+
+foreach($glob_list as $gnum => $glob_val) {
+	descend_list($glob_val);
+}
+
+echo $ANSI_OFF."\n\n";
+echo "Complete.\n\n";
+
+fgets(STDIN,1);
+
+?>

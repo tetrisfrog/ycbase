@@ -1,0 +1,87 @@
+#!/usr/bin/php
+<?php
+/******************************************************************************
+ *
+ * yc_octofind - Integrated Circuit (IC) & Part Finder of the Crescent
+ * Determine IC/Part Information using Octopart lookup
+ *
+ * Copyright (c) 2013 Jacob Hipps - tetrisfrog@gmail.com
+ * http://jhipps.neoretro.net/
+ *
+ * Started: 26 Aug 2013
+ * Updated: 04 Sep 2013
+ * Revision: 0
+ *
+ * Attempts to determine information using Octopart, Google, and other
+ * sources, about the part number specified by the input string/file(s).
+ * Retrieves PDF files, 3D/2D CAD drawings, pricing info from Mouser,
+ * Digikey, etc. Can read and manipulate netlists and also back-annotate
+ * information, such as current pricing, URLs to pages, and auto-download
+ * SPICE data for similation using spicerobber and other ycEDA utils.
+ *
+ *****************************************************************************/
+
+/*%%%
+
+	### YC Unified Metadata information
+	# https://jhipps.neoretro.net/ycumeta/
+
+	@YC_UMETA {
+		'meta-format':		{ 'id': "YC_UMETA", 'version': "1.0", 'src-lang': "PHP" },
+		'meta-spec':		{ "http://jotunn/ycumeta/specdef.json" },
+		'meta-spec-fmt':	"JSON",
+		'meta-src-lang':	"PHP",
+		
+		'master-include':	"yc_bstrap"
+	}
+
+%%%*/
+
+$YC_SNAME = "yc_octofind";
+$YCS_INFO = 	Array(
+                   'name' => $YC_SNAME,
+                   'desc' => "yc_octofind - Determine Part Info via Octopart Database",
+                   'author' => "J. Hipps",
+                   'copyright' => "Copyright (c) 2013 J. Hipps",
+                   'website' => "http://neoretro.net/octofind";
+                   'started' => "26 Aug 2013",
+                   'updated' => "26 Aug 2013",
+                   'revision' => 0,
+                   'deps' => 	Array(
+                                    'yc_bstrap' => Array('desc' => "YellowCrescent Common PHP Codebase", 'rev' => 0)
+								)
+				);
+
+$YC_CONSOLE = STDOUT;
+$YC_ERROUT = STDERR;
+$YC_BOOTSTRAP = realpath("./yc_bstrap");
+
+require_once($YC_BOOTSTRAP);
+
+function show_usage() {
+	global $GL_SNAME;
+	zecho("\n\n");
+	zecho($YCS_INFO['name']."\n");
+	zecho($YCS_INFO['desc']."\n");
+	zecho($YCS_INFO['copyright']."\n");
+	zecho($YCS_INFO['website']."\n\n");
+
+	zecho("Usage:\n");
+	zecho("\t$YC_SNAME [<mode>] [<options>] <part_id>\n\n");
+
+	zecho("\t\tModes:\n");
+	zecho("\t\t\ts[earch]\t\tSearch Octopart DB for part info [DEFAULT]\n");
+	zecho("\t\t\tp[df]\t\tGet PDF for part, if available\n");
+	zecho("\n");
+	zecho("\t\tOptions:\n");
+	zecho("\t\t\t-s\t\tSearch Octopart DB for part info [DEFAULT]\n");
+	
+	
+}
+
+if($argc < 2) {
+	show_usage();
+	exit(1);
+}
+
+?>

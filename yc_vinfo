@@ -1,0 +1,555 @@
+#!/usr/bin/php
+<?php
+/**
+ **%%YCDOC*********************************************************************
+ **%%vim: set modelines=40:
+ * 
+ * yc_vinfo - YC Video Metadata Parser
+ * YellowCrescent Bindings for mkvtoolnix (mkvinfo), ogmtools (ogminfo),
+ * and Mediainfo
+ * 
+ * Parse metadata and stream information from video stream containers,
+ * such as AVI, OggMedia (OGM), and Matroska (MKV)
+ *
+ * Copyright (c) 2014 Jacob Hipps - tetrisfrog@gmail.com
+ * http://jhipps.neoretro.net/
+ *
+ * Started: 28 Jan 2014
+ * Updated: 28 Jan 2014
+ * Revision: r1
+ *
+ * @package		neoretro\yellowcrescent
+ * @subpackage	yc_vinfo
+ * @category	media
+ * @fullpkg		neoretro.yellowcrescent.yc_vinfo
+ * @version		0.01.0
+ * @author		Jacob Hipps - tetrisfrog@gmail.com
+ * @copyright	Copyright (c) 2014 Jacob Hipps/Neo-Retro Group
+ * @license		GNU LGPLv3 - http://www.gnu.org/licenses/lgpl.html
+ * @param 		vim: set ts=4 sw=4 noexpandtab syntax=php:
+ *
+ * @depends		apt:mediainfo,apt:mkvtoolnix,apt:ogmtools,pear:xattr
+ *
+ * @link		https://github.com/tetrisfrog/ycbase				YCCC Github page
+ * @link		https://neoretro.net/yccc/							YCCC Home Page - Neo-Retro
+ * @link		http://jhipps.neoretro.net/yccc/media/yc_vinfo		YCCC Tracker - yc_vidinfo
+ *
+ *****************************************************************************/
+
+// ^(?<trunk>[|]?)(?<stem>[ ]*)(?<limb>[+])(?:\s+)((?<lkey>[^:()\n|]+)(?:[:] (?<rval>[^|\n]+))|(?<tline>[^|\n]+))$
+
+define('TVDB_API_KEY',	'DE1C5FD2150BEE8D');
+define('TVDB_MIRROR',	'http://thetvdb.com');
+define('TVDB_IMGBASE',	'http://thetvdb.com/banners/');
+
+// Log levels
+define('LL_SILENT',		-1);
+define('LL_ERROR',		0);
+define('LL_WARNING',	1);
+define('LL_PROMPT',		2);
+define('LL_NOTICE',		3);
+define('LL_INFO',		4);
+define('LL_MOREINFO',	5);
+define('LL_VERBOSE',	6);
+define('LL_DEBUG',		9);
+
+// Default verbosity level
+$verbose_level = LL_DEBUG; // (0 = Errors only, 9 = Everything) See above
+
+$YCMI_SCRAPERS = Array(
+						'ann' =>	Array(
+											'desc' => "Anime News Network",
+											'mtype' => 'anime',
+											'cb' => 'ycmi_scrape_ann',
+											'default' => Array('anime' => true, 'anime-film' => true, 'tv' => false, 'film' => false)
+										 ),
+						'anidb' =>	Array(
+											'desc' => "AniDB",
+											'mtype' => 'anime',
+											'cb' => 'ycmi_scrape_anidb',
+											'default' => Array('anime' => true, 'anime-film' => true, 'tv' => false, 'film' => false)
+										 ),
+						'tvdb' =>	Array(
+											'desc' => "theTVDb",
+											'mtype' => 'tv',
+											'cb' => 'ycmi_scrape_tvdb',
+											'default' => Array('anime' => true, 'anime-film' => false, 'tv' => true, 'film' => false)
+										 ),
+						'tmdb' =>	Array(
+											'desc' => "TheMovieDB",
+											'mtype' => 'film',
+											'cb' => 'ycmi_scrape_tmdb',
+											'default' => Array('anime' => false, 'anime-film' => true, 'tv' => false, 'film' => true)
+										 ),
+
+                      );
+
+$YCMI_OPTDEX = Array(
+                    	'topdir' =>		Array(
+	                    	                	'desc' => "Top working directory",
+	                    	                	'sopt' => 'd', 'lopt' => 'dir',
+	                    	                	'action' => 'setopt',
+	                    	                	'default' => getcwd()
+                    	                	 ),
+                    	'recurse' =>	Array(
+	                    	                	'desc' => "Disable subdirectory recursion",
+	                    	                	'sopt' => 'R', 'lopt' => 'norecur',
+	                    	                	'action' => 'setflag', 'setval' => false,
+	                    	                	'default' => true
+                    	                	 ),
+                    	'rhash' =>		Array(
+	                    	                	'desc' => "Calculate checksum hashes for media files (CRC32, MD5, SHA-1, ed2k)",
+	                    	                	'sopt' => 'h', 'lopt' => 'hash',
+	                    	                	'action' => 'setflag',
+	                    	                	'default' => false
+                    	                	 ),
+                    	'meta' =>		Array(
+	                    	                	'desc' => "Create and populate meta directory (required for artwork fetching)",
+	                    	                	'sopt' => 'm', 'lopt' => 'meta',
+	                    	                	'action' => 'setflag',
+	                    	                	'default' => true
+                    	                	 ),
+                    	'metadir' =>	Array(
+	                    	                	'desc' => "Meta directory name (recommended to leave default)",
+	                    	                	'lopt' => 'metadir',
+	                    	                	'action' => 'setopt',
+	                    	                	'default' => '_meta'
+                    	                	 ),
+                    	'mediainfo' =>	Array(
+	                    	                	'desc' => "Enable `mediainfo` execution to gather media metadata",
+	                    	                	'sopt' => 'M', 'lopt' => 'mediainfo',
+	                    	                	'action' => 'setflag',
+	                    	                	'default' => true
+                    	                	 ),
+                    	'mtype' =>		Array(
+	                    	                	'desc' => "Set media type (use 'help' to show list of types)",
+	                    	                	'sopt' => 'M', 'lopt' => 'mediainfo',
+	                    	                	'action' => 'setenum',
+	                    	                	'enum' => Array(
+	                    	                	            		'tv' => Array('desc' => "TV episodes", 'cb' => 'ycmi_mfetch_tv'),
+	                    	                	            		'anime' => Array('desc' => "Anime TV (TVアニメ)", 'cb' => 'ycmi_mfetch_anime'),
+	                    	                	            		'film' => Array('desc' => "Film/Movies", 'cb' => 'ycmi_mfetch_film'),
+	                    	                	            		'anime-film' => Array('desc' => "Anime Film (アニメフィルム)", 'cb' => 'ycmi_mfetch_anifilm'),
+ 	                    	                	            		'auto' => Array('desc' => "Autodetect (choosing a specific category will yield better results)", 'cb' => 'ycmi_mfetch_auto')
+	                    	                	               ),
+	                    	                	'default' => 'auto'
+                    	                	 ),
+                    	'scrape' =>		Array(
+	                    	                	'desc' => "List of scrapers to enable (seperated by commas)",
+	                    	                	'sopt' => 's', 'lopt' => 'scrape',
+	                    	                	'action' => 'setenum_multi',
+	                    	                	'enum' => $YCMI_SCRAPERS
+                    	                	 ),
+                    	'xattr' =>		Array(
+	                    	                	'desc' =>	"Enable user-mode extended attributes (xattr) for metadata storage",
+	                    	                	'xdesc' =>  Array(
+																	"Requires 'xattr' PHP/PEAR module and filesystem support.",
+																	"Filesystem support:",
+																	"Linux: ext2/3/4, XFS, JFS, Reiser, Btrs, NTFS",
+																	"Mac OSX: HFS+, MacFUSE filesystems which support xattr calls",
+																	"Windows: NTFS",
+																	"On Linux, the 'user_xattr' mount option may be required."
+																),
+	                    	                	'sopt' => 'X', 'lopt' => 'xattr',
+	                    	                	'action' => 'setflag',
+	                    	                	'default' => true
+                    	                	 ),
+                     );
+
+function yc_build_optlist($odex,&$soptx,&$loptx) {
+	
+	foreach($odex as $ok => $ov) {
+		if($ov['action'] != 'setflag') $oox = ':';
+		else $oox = '';
+
+		if($ov['sopt']) $soptx .= $ov['sopt'].$oox;
+		if($ov['lopt']) $loptx[] = $ov['lopt'].$oox;
+	}
+}
+
+function ycmi_parse_options() {
+	global $YCMI_OPTDEX;
+	global $runopt;
+
+	yc_build_optlist($YCMI_OPTDEX,$sopt,$lopt);
+	$olist = getopt($sopt,$lopt);
+
+
+
+}
+
+function yc_xattr_enabled($fpath,$dont_deref=false) {
+	$xderef = ($dont_deref ? XATTR_DONTFOLLOW : 0);
+	$frealpath = realpath($fpath);
+	return xattr_supported($frealpath,$xderef);
+}
+
+function yc_xattr_enum($fpath,$use_root_context=false,$dont_reref=false) {
+	//if(yc_xattr_enabled($fpath) !== true) return Array('error' => 'UNSUPPORTED');
+
+	//$ctxflag = ($use_root_context ? XATTR_ROOT : 0) | ($dont_deref ? XATTR_DONTFOLLOW : 0);
+
+	$xlistx = xattr_list($fpath);
+	//print_r($xlistx);
+
+	if(is_array($xlistx) && count($xlistx) > 0) {
+		foreach($xlistx as $xi => $xv) {
+			$xout[$xv] = xattr_get($fpath,$xv);
+		}
+	} else {
+		$xout = Array(NULL);
+	}
+
+	return $xout;
+}
+
+function yc_enumdir($dpath,&$dasc,$topmost=true) {
+	global $_yc_finfo;
+
+	$dtop = scandir($dpath);
+	
+	foreach($dtop as $xv) {
+		if(($xv == '.' && !$topmost) || $xv == '..') continue;
+		if($xv == '.' && $topmost) $topmost = false;
+
+		$cfrp = realpath($dpath.'/'.$xv);
+		$dasc[$xv]['type'] = filetype($cfrp);
+		$dasc[$xv]['stat'] = array_slice(stat($cfrp),13);
+		$dasc[$xv]['xattr'] = yc_xattr_enum($cfrp);
+		$dasc[$xv]['user'] = posix_getpwuid($dasc[$xv]['stat']['uid']);
+		$dasc[$xv]['group'] = posix_getgrgid($dasc[$xv]['stat']['gid']);
+		if($dasc[$xv]['type'] == 'dir') {
+			yc_enumdir($cfrp,$dasc[$xv]['contents'],false);
+		} else {
+			//$dasc[$xv]['mime'] = finfo_file($_yc_finfo,$cfrp);
+			/*
+			yc_exec('/usr/bin/mediainfo',Array($cfrp),$xxout,NULL,$xxerr);
+			$dasc[$xv]['mediainfo_stdout'] = $xxout;
+			$dasc[$xv]['mediainfo_stderr'] = $xxerr;
+			$dasc[$xv]['checksum'] = ycmi_rhash($cfrp);
+			*/
+			$dasc[$xv]['mediainfo'] = get_mediainfo_xml($cfrp);
+		}
+	}
+
+}
+
+function yc_exec($binx,$argvx,&$xout=NULL,$xin=NULL,&$xerr=NULL,$cwdx=NULL) {
+	if(!$cwdx) $cwdx = getcwd();
+
+	$dspec = Array(
+	               0 => array("pipe", "r"),
+	               1 => array("pipe", "w"),
+	               2 => array("pipe", "w")
+	               );
+
+	$cmdx = $binx;
+	foreach($argvx as $zopt => $zarg) {
+		$cmdx .= " ".escapeshellarg($zarg);
+	}
+	$pxp = proc_open($cmdx,$dspec,$piper,$cwdx);
+
+	// input (stdin)
+	fwrite($piper[0],$xin);
+	fclose($piper[0]);
+
+	// output (stdout)
+	$xout = stream_get_contents($piper[1]);
+	fclose($piper[1]);
+
+	// stderr
+	$xerr = stream_get_contents($piper[2]);
+	fclose($piper[2]);
+
+}
+
+function ycmi_rhash($fname) {
+
+	yc_exec('/usr/bin/rhash',Array('--crc32','--md5','--sha1','--ed2k','--printf=%C %m %h %e',$fname),$xox);
+	$xra = explode(' ',trim($xox));
+	$xout['crc32'] = $xra[0];
+	$xout['md5'] = $xra[1];
+	$xout['sha1'] = $xra[2];
+	$xout['ed2k'] = $xra[3];
+
+	return $xout;
+}
+
+// tv_rename functions
+
+function parse_episode_filename($dval) {
+	global $fregex;
+
+	// check for valid extention
+	if(preg_filter($valid_ext,"",$dval)) {
+		// regex match
+		$found = false;
+		foreach($fregex as $rgx) {
+			unset($mm);
+
+			// Regex forced by command line option..
+			if($rgx_force != -1) {
+				$rgx = $fregex[$rgx_force];
+			}
+
+			// Do the matching
+			if(preg_match($rgx,$dval,$mm)) {
+				
+				// find tvdb match
+				$snum = $mm['season'];
+				if($mm['season'] == "") $snum = $season;
+
+				// fix ep# if necessary (for 3-4 digit nums)
+				$epnum = $mm['epnum'];
+				if($epnum > 100) {
+					$epnum = substr($mm['epnum'],-2);
+					$snum  = substr($mm['epnum'],0,(strlen($mm['epnum']) - 2));
+				}
+
+				if($season_ovr != -1) $snum = $season_ovr;
+
+				logthis("Matched [$dval] with regex [$rgx].\n",LL_VERBOSE);
+				logthis("> Se#[$snum] Ep#[$epnum]\n",LL_VERBOSE);
+				
+				if(($dex = find_tvdb_match($snum,$epnum)) != -1) {
+
+					$frep = Array(	$show,
+							sprintf("%02d",$snum),
+							sprintf("%02d",$epnum),
+							$eps_dex[$dex]['EpisodeName']
+						     );
+
+					$outfilex = preg_replace($fmt_spec,$frep,$fmt_str).substr($dval,-4);
+					$outfile  = preg_replace($illegal_chars,"",$outfilex);
+
+					logthis(sprintf("%2d. $dval\n",($rdxi + 1)));
+					logthis(sprintf("   ---> $outfile\n"));
+
+					$rn_dex[$rdxi]['infile'] = $thisdir."/".$dval;
+					$rn_dex[$rdxi]['outfile'] = $thisdir."/".$outfile;
+
+					$found = true;
+					$rdxi++;
+				} else {
+					logthis("Episode not in thetvdb.com database!!\n",LL_WARNING);
+				}
+				break;
+			}
+			if($rgx_force != -1) break;
+		}
+		if(!$found) logthis("Couldn't match [$dval]\n",LL_WARNING);
+	}
+
+}
+
+/**
+ * Convert SimpleXMLElement object to array
+ * Copyright Daniel FAIVRE 2005 - www.geomaticien.com
+ * Copyleft GPL license
+ */
+function simplexml2array($xml) {
+   if (get_class($xml) == 'SimpleXMLElement') {
+       $attributes = $xml->attributes();
+       foreach($attributes as $k=>$v) {
+           if ($v) $a[$k] = (string) $v;
+       }
+       $x = $xml;
+       $xml = get_object_vars($xml);
+   }
+   if (is_array($xml)) {
+       if (count($xml) == 0) return (string) $x; // for CDATA
+       foreach($xml as $key=>$value) {
+           $r[$key] = simplexml2array($value);
+       }
+       if (isset($a)) $r['@'] = $a;    // Attributes
+       return $r;
+   }
+   return (string) $xml;
+}
+
+function find_tvdb_match($ss,$ee) {
+
+	global $eps_dex;
+
+	foreach($eps_dex as $kk => $epz) {	
+		if(intval($epz['EpisodeNumber']) == intval($ee) && intval($epz['SeasonNumber']) == intval($ss)) {
+			//logthis("\t>>> got it!!\n";
+			return $kk;
+		}
+	}
+
+	return -1;
+}
+
+function logthis($instr,$level=LL_INFO) {
+	global $verbose_level;
+	if($level <= $verbose_level) echo $instr;
+}
+
+
+
+function get_tvdb_series_id($show) {
+	global $Amirror;
+
+	logthis("Searching for series information...\n",LL_MOREINFO);
+
+	if($imdb_id)	$ssx = file_get_contents(TVDB_MIRROR."/api/GetSeriesByRemoteID.php?imdbid=".urlencode($imdb_id));
+	else			$ssx = file_get_contents(TVDB_MIRROR."/api/GetSeries.php?seriesname=".urlencode($show).$langsuffix);
+
+	unset($ssx_xml);
+	$ssx_xml = simplexml_load_string($ssx);
+
+	//print_r($ssx_xml);
+	$results = count($ssx_xml);
+
+	// convert annoying SimpleXML object to a nice array
+	$ssx_arr = simplexml2array($ssx_xml);
+
+	//print_r($ssx_arr);
+	//print_r(array_keys($ssx_arr));
+	//print_r($ssx_arr['Series']);
+
+	if($results == 1) {
+		logthis("Exact match found!\n");
+		logthis(" + Series: ".$ssx_arr['Series']['SeriesName']." (".$ssx_arr['Series']['seriesid'].") [".$ssx_arr['Series']['FirstAired']."]\n");
+		$series_id = $ssx_arr['Series']['seriesid'];
+		$lang = $ssx_arr['Series']['language'];
+
+		if($ssx_arr['Series']['SeriesName'] != $show) {
+			$show = $ssx_arr['Series']['SeriesName'];
+			logthis("Using corrected title [$show].\n");
+		}
+	} else if(!$results) {
+		logthis("*** No results returned!\n",LL_WARNING);
+		logthis("Try using the -h option for usage information, or\n",LL_WARNING);
+		logthis("the -s option to manually specify the series name.\n\n\n",LL_WARNING);
+		exit(200);
+	} else {
+		logthis("Multiple results returned.\n",LL_PROMPT);
+		foreach($ssx_arr['Series'] as $kkey => $sxs) {
+			logthis(" + (".($kkey+1).") Series: ".$sxs['SeriesName']." (".$sxs['seriesid'].") [".$sxs['FirstAired']."]\n",LL_PROMPT);
+			if($kkey > $MAX_SERIES_RESULTS) break;
+		}
+
+		if($require_exact) {
+			// user specified -x, auto-aborting if ambiguous
+			logthis("Exact match not found. Exiting per -x option.\n\n",LL_WARNING);
+			exit(202);
+		} else if($first_match) {
+			// if -1 option, auto-select first match
+			$userinp = 1;
+		} else {
+			// otherwise, prompt user to select best match
+			for(;;) {
+				logthis("Series #: ",LL_PROMPT);
+				$userinp = intval(fgets(STDIN));
+				if($userinp > 0 && $userinp <= count($ssx_arr['Series'])) break;
+			}
+		}
+		$userinp--;
+
+		$series_id = $ssx_arr['Series'][$userinp]['seriesid'];
+		$lang = $ssx_arr['Series'][$userinp]['language'];
+
+		if($ssx_arr['Series'][$userinp]['SeriesName'] != $show) {
+	                $show = $ssx_arr['Series'][$userinp]['SeriesName'];
+	                logthis("Using corrected title [$show].\n");
+	        }
+	}
+
+	if(!$series_id) {
+		logthis("Could not retrieve series id!!\n\n",LL_ERROR);
+		//exit(201);
+		return false;
+	}
+
+	return $series_id;
+}
+
+function get_tvdb_series_info($series_id,$lang="en") {
+	$base_xml = file_get_contents(TVDB_MIRROR."/api/".TVDB_API_KEY."/series/$series_id/all/${lang}.xml");
+
+	$bsx = simplexml_load_string($base_xml);
+	$bsx = simplexml2array($bsx);
+
+	logthis(print_r($bsx,true),LL_DEBUG);
+
+	return $bsx;
+}
+
+////
+
+function get_meta_dir($bdir,$xcreate=true) {
+	$mdir = realpath($bdir).'/_meta';
+	if(file_exists($mdir) && is_dir($mdir)) {
+		return $mdir;
+	} else {
+		if(!mkdir($mdir)) {
+			logthis("Failed to create meta dir [$mdir]\n",LL_ERROR);
+			return false;
+		} else {
+			return $mdir;
+		}
+	}
+}
+
+function get_tvdb_imgs($bdir,&$tdex) {
+	
+	$nm_rgx = "/\/(?<iname>([^\/]+?)\.jpg)$/";
+
+	$ibanner = $tdex['Series']['banner'];
+	$ifanart = $tdex['Series']['fanart'];
+	$iposter = $tdex['Series']['poster'];
+
+	$ibi = file_get_contents(TVDB_IMGBASE.$ibanner);
+	$ifi = file_get_contents(TVDB_IMGBASE.$ifanart);
+	$ipi = file_get_contents(TVDB_IMGBASE.$iposter);
+
+	preg_match($nm_rgx,$ibanner,$ibx);
+	preg_match($nm_rgx,$ifanart,$ifx);
+	preg_match($nm_rgx,$iposter,$ipx);
+
+	$ibo = realpath($bdir)."/".$ibx['iname'];
+	$ifo = realpath($bdir)."/".$ifx['iname'];
+	$ipo = realpath($bdir)."/".$ipx['iname'];
+
+	file_put_contents($ibo, $ibi);
+	file_put_contents($ifo, $ifi);
+	file_put_contents($ipo, $ipi);
+
+	symlink($ibx['iname'],$bdir."/banner.jpg");
+	symlink($ifx['iname'],$bdir."/fanart.jpg");
+	symlink($ipx['iname'],$bdir."/poster.jpg");
+}
+
+
+function get_mediainfo_xml($fname) {
+	yc_exec('/usr/bin/mediainfo',Array('--Output=XML',$fname),$xstr);
+	$bsx = simplexml_load_string($xstr);
+	$bsx = simplexml2array($bsx);
+
+	logthis(print_r($bsx,true),LL_DEBUG);
+	return $bsx;
+}
+
+//$topdir = realpath("/mnt/azunyan/movies/Anime/Nisekoi");
+$sname  = "Non Non Biyori";
+$topdir = getcwd();
+preg_match("/\/(?<scdname>[^\/]+?)$/", $topdir, $xdfilt);
+//$sname  = $xdfilt['sname'];
+$mdir   = get_meta_dir($topdir);
+
+$tvdb_sid = get_tvdb_series_id($sname);
+$tvdb_info = get_tvdb_series_info($tvdb_sid);
+get_tvdb_imgs($mdir,$tvdb_info);
+
+$_yc_finfo = finfo_open(FILEINFO_PRESERVE_ATIME | FILEINFO_MIME | FILEINFO_SYMLINK);
+
+$n2deep = Array();
+yc_enumdir($topdir,$n2deep);
+
+print_r($n2deep);
+
+finfo_close($_yc_finfo);
+
+?>

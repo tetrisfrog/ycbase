@@ -1,0 +1,26 @@
+#!/usr/bin/php
+<?php
+
+$locate_cmd = "locate -b gcc | pcregrep -e '([a-zA-Z0-9-_]+-)?gcc([a-zA-Z0-9-_]+)?$' | grep -e '^/usr/bin/' | grep -v -e 'gccbug' -e 'winegcc'";
+
+$lresult = shell_exec($locate_cmd);
+
+$lfiles = explode("\n", $lresult);
+
+print_r($lfiles);
+
+
+foreach($lfiles as $fk => $lfp) {
+	if(!trim($lfp)) continue;
+	$lfp_real = realpath($lfp);
+	if(is_executable(realpath($lfp_real)) && is_readable($lfp_real)) {
+		$cmach = trim(shell_exec($lfp_real." -dumpmachine"));
+		$gout[basename($lfp_real)] = Array('path' => $lfp_real, 'machine' => $cmach);
+	}
+}
+
+print_r($gout);
+
+
+
+?>

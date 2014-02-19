@@ -1,0 +1,245 @@
+<?php
+/**
+ **%%YCDOC*********************************************************************
+ **%%vim: set modelines=40:
+ * 
+ * spicerobber - SPICE downloader
+ * Download and parse SPICE definition files from manufacturer websites
+ * and build corresponding GEDA definition files
+ * 
+ * Copyright (c) 2013,2014 Jacob Hipps - tetrisfrog@gmail.com
+ * http://jhipps.neoretro.net/
+ *
+ * Started: 24 Nov 2013
+ * Updated: 24 Jan 2013
+ * Revision: r1
+ *
+ * @package		neoretro\yellowcrescent
+ * @subpackage	spicerobber
+ * @category	utilaux
+ * @fullpkg		neoretro.yellowcrescent.utilaux.spicerobber
+ * @version		0.01.0
+ * @author		Jacob Hipps - tetrisfrog@gmail.com
+ * @copyright	Copyright (c) 2013,2014 Jacob Hipps/Neo-Retro Group
+ * @license		GNU LGPLv3 - http://www.gnu.org/licenses/lgpl.html
+ * @param 		vim: set ts=4 sw=4 noexpandtab syntax=php:
+ *
+ * @depends		NONE
+ *
+ * @link		https://github.com/tetrisfrog/ycbase				YCCC Github page
+ * @link		https://neoretro.net/yccc/							YCCC Home Page - Neo-Retro
+ * @link		http://jhipps.neoretro.net/yccc/utilaux/spicerobber	YCCC Tracker - UtilAux - spicerobber
+ *
+ *****************************************************************************/
+
+$_YC =	Array(
+             	'host' =>		Array(
+             	                 		'hostname' =>  
+             	                	 ),
+             	'host' =>		Array(
+				                 		'hostname' =>
+                					 ),
+             );
+
+$GLOBALS['_YC'] =& $_YC;
+
+
+$typeMatch = Array	(
+                    	'match' =>			Array(
+                    	                   			0 =>	Array(
+                    	                   							'callback' => 'yc_parser::match_reg'
+                    	                   						 ),
+                    	                   			'all' => Array('exec' => 'preg_match_all', 'retval' => false, 'args' => Array('[rgx]','[input]','[output]',PREG_SET_ORDER|PCRE_UTF8) ),
+                    	                   			'single' => Array('exec' => 'preg_match', 'retval' => false, 'args' => Array('[rgx]','[input]','[output]',PCRE_UTF8) )
+                    	            			 ),
+                    	'list_match' =>		Array(
+                    	                   			'all' => Array('exec' => 'preg_match_all', 'retval' => false, 'args' => Array('[rgx]','[input]','[output]',PREG_SET_ORDER|PCRE_UTF8) ),
+                    	                   			'single' => Array('exec' => 'preg_match', 'retval' => false, 'args' => Array('[rgx]','[input]','[output]',PCRE_UTF8) )
+                    	            			 ),
+                    	'sub_match' =>		Array(
+                    	                   			'single',
+                    	                   			'all'
+                    	            			 ),
+                    	'copy' =>			Array(
+                    	                   			''
+                    	            			 ),
+                    	'null' =>			Array(
+                    	                   			''
+                    	            			 ),
+                   	);
+
+
+class yc_parser_symtab {
+	protected static $_yc_symcount = 0;
+	protected static $_yc_symtab = null;
+
+	private static $_yc_symid;
+
+	protected $parent;
+	protected $id;
+	protected $symname;
+
+	protected $symval;
+
+
+	function __construct(&$parentref,$is_topmost=false) {
+		self::$_yc_symid = uniqid($GLOBALS['_YC']['uuid_prefix']);
+
+		if($parentref === false) {
+			$_yc_symcount = new Array();
+		} else {
+
+		}
+	}
+}
+
+class yc_parser {
+	static $ycp_vtab_sz;
+	static $ycp_vtab = new Array();
+
+	function __construct() {
+		$ycb_vtab_sz = 0;
+	}
+
+}
+
+$spicerack = Array(
+	'maxim' => Array(
+		'type'				=> "site_crawler",
+		'nopound_delay'		=> 0.250,
+		'segmentation'		=> Array("section_list", "subsection_type_list", "device_list", "product_page"),
+		'portal_url'		=> "http://www.maximintegrated.com/design/tools/modeling-simulation/spice/",
+		'section_list'		=>	Array(
+		                         		'depth' =>			0,
+										'page' => 			Array(
+		                             								'type' => 'section_match/single',
+																	'input' => '_fullpage',	
+																	'xpass' => "area_data",
+																	'rgx' => "/<h1>SPICE Models</h1>(?:.+?)<ul>(?<area_data>.+?)<h3>SPICE Simulators</h3>/ism"
+															 	 ),
+										'list' =>			Array(
+										                  			'type' => 'sub_match/all',
+																	'input' => 'area_data',
+																	'output' => Array('section_url','section_keyword','section_name'),
+																	'prefix' => Array('section_url' => 'http://www.maximintegrated.com'),
+																	'url_follow' => 'section_url',
+																	'url_name' => 'section_name',
+																	'rgx' => 'list_/<a href="\/(?<section_url>[^"]+?\/(?<section_keyword>[^"\/]+))\/?">(?<section_name>[^<]+)<\/a>/gism'
+																 )
+									 ),
+		'subsection_list'   =>	Array(
+		                             	'depth' =>			1,
+		                             	'page' =>			Array(
+		                             								'type' => 'section_match/single',
+																	'input' => '_fullpage',																	
+																	'xpass' => 'area_data',
+																	'rgx' => "/<div class=text25>(?<area_data>.+?)<\/div>/gsm"
+																  ),
+		                             	'list' =>			Array(
+		                             	                       		'type'  => 'list_match/all',
+		                             	                       		'input' => 'area_data',
+																	'xpass' => "subsection_url",
+																	'url_follow' => 'subsection_url',
+																	'url_name' => 'subsection_name',																	
+																	'prefix' => Array('subsection_url' => 'http://www.maximintegrated.com'),
+																	'rgx' => "/<a href=\"(?<subsection_url>[^\"]+)\">(?<subsection_name>.+?)<\/a>/gm"
+																 )
+		                             	'item' =>			Array(
+		                             	                        	'type' => 'sub_match/single',
+		                             	                        	'input' => 'subsection_url',
+		                             	                        	'output' => Array('item_type'),
+		                             	                        	'rgx' => '/\/(?<item_type>[^\/]+)\/$/x'
+		                             	                         )
+		                             ),
+		'device_list'		=>	Array(
+		                        		'depth' =>			2,
+										'page' =>			Array(
+										                  			'type' => 'copy',
+										                  			'input' => '_fullpage',
+										                  			'xpass' => 'area_data'
+										                  		 )
+										'list' =>			Array(
+																	'type' => 'list_match/all',
+																	'input' => 'area_data',
+																	'output' => Array('product_id_num','part_name','spicey_file_url','plain_filename','file_desc'),
+																	'url_follow' => 'product_page_url',
+																	'prefix' => Array('product_page_url' => 'http://www.maximintegrated.com'),
+																	'rgx' => '/"(?<product_page_url>\/datasheet\/index.mvp\/id\/(?<product_id_num>\d+))">(?<part_name>[\w]+)<\/a>(?:.*?)href="(?<spicey_file_url>[^"]+\/(?<plain_filename>[^"\/]+))(?:.*?)nowrap>(?<file_desc>[^<]+)<\/td>/gxsm'
+																 )										
+									 ),
+		'product_page'		=>	Array(
+		                         		'depth' =>			3,
+										'page' =>			Array(
+																	'type' => 'match/single',
+																	'input' => '_fullpage',
+																	'output' => Array('device_datasheet_url'),
+																	'prefix' => Array('device_datasheet_url' => 'http://www.maximintegrated.com'),
+																	'rgx' => '/<a href="(?<device_datasheet_url>[^"]+\/([^\/\"]+))" target="_blank" ><img align=absMiddle border=0 src=\'/images/acrobat-icon.gif\' alt="Download this datasheet in PDF format" hspace=1>/ism'
+																 )
+									 ),
+
+		'file_classify'		=>	Array(
+										'pdf' => Array('mime' => "application/pdf", 'dialect' => false, 'source_section' => "product_page", 'action' => "store"),
+										'fam' => Array('mime' => "text/plain", 'mime-alt' => "application/x-spice" )
+									 )
+	)
+);
+
+
+class spiceRacker {
+
+	private function get_page_section($pageurl,$rulelist) {
+		$fulltxt = get_file_contents($pageurl);
+
+		$modtxt = $fulltxt;
+		foreach($rulelist as $rname => $rgx) {
+			preg_match_all($rgx['rgx'], $modtxt, $zmatch, PREG_SET_ORDER);
+			if($rgx['xpass']) {
+				$modtxt = $zmatch[$rgx['xpass']];
+				continue;
+			}
+
+			foreach($zmatch as $zm_set) {
+				foreach($zm_set as $zmi => $zms) {
+					if(is_int($zmi)) unset($zmatch[$zmi]);
+				}
+			}
+
+		}
+	}
+
+	public function site_crawler($spice_array) {
+		// get subkeys
+		foreach($spice_array as $aky => $akv) {
+			$nval = "x".strtoupper($aky);
+			$$nval = $akv;
+		}
+		
+		// get segments/page tiers
+		foreach($xSEGMENTATION as $aky => $akv) {
+			$segments[$akv]['level'] = $aky;
+		}
+
+		// retrieve URL listing for each Tier
+		foreach($segments as $segk => $tseg) {
+			$segreg = $spice_array[$tseg];
+
+		}
+
+	}
+
+}
+
+function spice_rackemrick($rackname) {
+	global $spicerack;
+
+	if(!isset($spicerack[$rackname])) {
+		assert()
+	}
+
+}
+
+assert_options(ASSERT_CALLBACK, 'dbg_assert');
+
+
+?>

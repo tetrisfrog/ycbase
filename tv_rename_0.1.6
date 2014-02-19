@@ -1,0 +1,704 @@
+#!/usr/bin/php
+<?php
+/***************************************************************
+TV Episode renamer
+Apr 21, 2011 - jhipps
+Last update: Nov 26, 2013 - jhipps
+http://jhipps.org/
+
+This script is meant to be invoked via CLI.
+
+0.1.6 [26 Nov 2013]		Added -L language option
+
+Exit status codes:
+0   = OK/Success
+1   = Help/Usage information
+101 = Invalid syntax or options
+200 = No results/matches
+201 = Unable to retrieve Series ID
+202 = No exact match (when used with -x option)
+203 = No valid files detected
+
+***************************************************************/
+
+// CONFIG //////////////////////////////////////////////////////
+
+// File match regex array
+//    (using named capture) <season> = Season, <epnum> = Episode
+//    if <epnum> returns a number > 100, then it extracts episode
+//    and season info from it. (eg. 204 = season 2, episode 4)
+$fregex = Array(
+	"/^(.+?)(?P<season>[0-9]{1,2})x(?P<epnum>[0-9]{1,2})(.*)$/",
+	"/^(.+)[\._](?P<epnum>[0-9]{1,4})[\._](.*)$/",
+	"/^(.+?)[\-_ ](?P<epnum>[0-9]{2})[\-_ ](.*)$/",
+	"/^(.+)[sS](?P<season>[0-9]{1,2}) ?[eE](?P<epnum>[0-9]{1,2})(.*)$/",
+	/*"/^(.+)[sS](?P<season>[0-9]{1,2}) [eE](?P<epnum>[0-9]{1,2})(.*)$/",*/
+	"/^(.+?) (?P<season>[0-9]{1,2}) (?P<epnum>[0-9]{1,2}) (.*)$/",
+	"/^(.+) - (?P<epnum>[0-9]{1,2})(.*)$/",
+	"/^(.+?)(?P<epnum>[0-9]{1,4})\.(.+)$/",
+	"/^(.+?)(?P<epnum>[0-9]{2,3})(.+)$/",
+	"/^(?P<epnum>[0-9]{2,4})(.+)$/"
+);
+
+// Output file naming
+//     <series>  = Series Title
+//     <season>  = Two-digit padded series number (eg. 02)
+//     <episode> = Two-digit padded episode number (eg. 08)
+//     <title>   = Episode title
+$fmt_str = "<series> - S<season>E<episode> - <title>";
+
+// Illegal characters - Regex (removed from final filename)
+//     ext3 has no illegal chars (except forward-slash)
+//     This can be modified, but be sure to double-escape when
+//     needed, because this will be applied by preg_replace()
+$illegal_chars = Array ("/\\?/","/\\//","/\\\\/","/\\\"/","/\\\`/");
+
+// Filetype filter patterns (extention) - Regex
+$valid_ext = Array("/.avi$/","/.mkv$/","/.mpg$/","/.ogm$/","/.mp4$/","/.iso$/","/.cue$/");
+
+// Max results to display when search for Series Title
+$MAX_SERIES_RESULTS = 15;
+
+////////////////////////////////////////////////////////////////
+
+error_reporting(E_ERROR);
+
+$ver   = "0.1.6";
+$vdate = "26 Nov 2013";
+
+if($argv[1] == "--help") show_usage();
+$oplist = getopt("a1qQvVxnRL:l:g:r:s:z:p:i:h?");
+
+////////////////////////////////////////////////////////////////
+
+// Log levels
+define('LL_SILENT',	-1);
+define('LL_ERROR',	0);
+define('LL_WARNING',	1);
+define('LL_PROMPT',	2);
+define('LL_NOTICE',	3);
+define('LL_INFO',	4);
+define('LL_MOREINFO',	5);
+define('LL_VERBOSE',	6);
+define('LL_DEBUG',	9);
+
+// Default verbosity level
+$verbose_level = LL_INFO; // (0 = Errors only, 9 = Everything) See above
+
+function show_usage() {
+	global $ver;
+	global $vdate;
+	global $fmt_str;
+	global $fregex;
+	global $valid_ext;
+
+	echo "\n";
+	echo "tv_rename [options]\n\n";
+	echo "Jacob Hipps - http://jhipps.org/ - v$ver - updated $vdate\n\n";
+	echo "Renames TV shows using thetvdb.com database.\n";
+	echo "Invoke this script from the folder where your TV series resides\n";
+	echo "or use the -p option to specify the path.\n\n";
+	echo "Licensed under LGPLv3\n\n";
+
+	echo "options:\n";
+	echo "            -n        Don't rename files. Just show what they would be renamed.\n";
+	echo "            -l dest   Create symbolic links to specified destination directory.\n";
+	echo "                      (Season and/or Series directories will be created if needed)\n";
+	echo "            -i id#    Specify IMDB number.\n";
+	echo "            -s name   Specify series name (if autodetect doesn't work)\n";
+	echo "            -p path   Specify path to series folder instead of using current directory\n";
+	echo "            -r log    Log changes to the specified file so that files can be reverted\n";
+	echo "                      back to their old names if needed (useful when used in auto mode)\n";
+	echo "            -a        Rename files without prompting\n";
+	echo "            -1        Auto-select first series match.\n";
+	echo "            -x        Require exact series match.\n";
+	echo "            -z #      Set season number\n";
+	echo "            -L lang   Specify language (two-character ISO 639-1 code)\n";
+	echo "            -g #      Force specified regex when performing episode title parsing\n";
+	echo "            -Q / -q / -v / -V\n";
+	echo "                      Set verbosity. -Q = Silent, -q = Errors only,\n";
+	echo "                                     -v = Verbose, -V = Debug\n";
+	echo "            -R        List Regex matching expressions\n";
+	echo "            -h / -?   Show this help\n\n\n";
+
+	echo "current config:\n";
+	echo "            fmt_str = \"$fmt_str\"\n";
+	echo "            fregex  = (\n";
+	foreach($fregex as $trgx) {
+		echo "                       $trgx\n";
+	}
+	echo "                      )\n";
+	echo "            Valid extensions:\n";
+	echo "               ";
+	foreach($valid_ext as $vext) {
+		echo str_replace(Array("/",".","$"),"",$vext)." ";
+	}
+	echo "\n\n\n";
+	exit(1);
+}
+
+/**
+ * Convert SimpleXMLElement object to array
+ * Copyright Daniel FAIVRE 2005 - www.geomaticien.com
+ * Copyleft GPL license
+ */
+function simplexml2array($xml) {
+   if (get_class($xml) == 'SimpleXMLElement') {
+       $attributes = $xml->attributes();
+       foreach($attributes as $k=>$v) {
+           if ($v) $a[$k] = (string) $v;
+       }
+       $x = $xml;
+       $xml = get_object_vars($xml);
+   }
+   if (is_array($xml)) {
+       if (count($xml) == 0) return (string) $x; // for CDATA
+       foreach($xml as $key=>$value) {
+           $r[$key] = simplexml2array($value);
+       }
+       if (isset($a)) $r['@'] = $a;    // Attributes
+       return $r;
+   }
+   return (string) $xml;
+}
+
+function find_tvdb_match($ss,$ee) {
+
+	global $eps_dex;
+
+	foreach($eps_dex as $kk => $epz) {	
+		if(intval($epz['EpisodeNumber']) == intval($ee) && intval($epz['SeasonNumber']) == intval($ss)) {
+			//logthis("\t>>> got it!!\n";
+			return $kk;
+		}
+	}
+
+	return -1;
+}
+
+function logthis($instr,$level=LL_INFO) {
+	global $verbose_level;
+	if($level <= $verbose_level) echo $instr;
+}
+
+////////////////////////////////////////////////////////////////
+
+// Parse options
+if(isset($oplist['h']) || isset($oplist['?'])) show_usage();
+if(isset($oplist['1'])) $first_match = true;	else $first_match = false;
+if(isset($oplist['n'])) $no_rename = true;	else $no_rename = false;
+if(isset($oplist['a'])) $auto_rename = true;	else $auto_rename = false;
+if(isset($oplist['x'])) $require_exact = true;	else $require_exact = false;
+
+
+if(isset($oplist['v'])) {
+	$verbose = true;
+	$verbose_level = LL_VERBOSE;
+} else {
+	$verbose = false;
+}
+
+if(isset($oplist['V'])) {
+	$debug = true;
+	$verbose_level = LL_DEBUG;
+} else {
+	$debug = false;
+}
+
+if(isset($oplist['q'])) {
+	$quiet = true;
+	$verbose_level = LL_WARNING;
+} else {
+	$quiet = false;
+}
+
+if(isset($oplist['Q'])) {
+	$silent = true;
+	$verbose_level = LL_SILENT;
+} else {
+	$silent = false;
+}
+
+
+if(isset($oplist['l'])) {
+	if(($slink_dest = trim($oplist['l'])) == "") {
+		logthis("*** ERROR: -l option requires an argument! (Destination directory name)\n\n",LL_ERROR);
+		exit(101);
+	}
+
+	// Check for destination dir existance and proper permissions
+	if(is_dir($slink_dir)) {
+		$slink_dir_exist = true;
+		logthis("> symlink destination dir exists! [$slink_dest]\n",LL_VERBOSE);
+	} else {
+		$slink_dir_exist = false;
+		logthis("> symlink destination dir does not exist or is regular file! [$slink_dest]\n",LL_VERBOSE);
+
+		$slink_dir_parent = realpath(dirname($slink_dir));
+		logthis("> slink_dir_parent = $slink_dir_parent\n",LL_DEBUG);
+	}
+	$symlink_enable = true;	
+} else {
+	$symlink_enable = false;
+}
+
+if(isset($oplist['s'])) {
+	$show_ovr = trim($oplist['s']);
+        if($show_ovr == "") {
+                logthis("*** ERROR: -s option requires an argument! (TV series name)\n\n",LL_ERROR);
+                exit(101);
+        }
+}
+
+if(isset($oplist['R'])) {
+	echo "\n\nEpisode matching regex list:\n\n";
+	foreach($fregex as $kr => $trgx) {
+		echo ($kr+1)."\t$trgx\n";
+	}
+	echo "\n\n";
+	echo "You can use -g # to force using a particular expression!\n\n";
+	exit(1);
+}
+
+if(isset($oplist['g'])) {
+	$rgx_force = intval($oplist['g']) - 1;
+	if($rgx_force < 0 || $rgx_force >= count($fregex)) {
+		echo "Specified regex ($rgx_force) is out-of-range!\nPlease use -R option to list available expressions!\n\n";
+		exit(101);
+	}
+} else {
+	$rgx_force = -1;
+}
+
+// Check for option sanity
+if($no_rename && $auto_rename) {
+	logthis("*** ERROR: -n and -a flags are mutually exclusive!\n\n\n",LL_ERROR);
+	exit(101);
+}
+
+if($quiet && $verbose) {
+	logthis("*** ERROR: -v and -q flags are mutually exclusive!\n\n\n",LL_ERROR);
+	exit(101);
+}
+
+////////////////////////////////////////////////////////////////
+// Let's go!
+
+logthis("\n",LL_WARNING);
+logthis("******* TV Episode Renamer - v$ver - $vdate - J. Hipps - http://jhipps.org/ *******\n",LL_WARNING);
+
+$season_ovr = -1;
+$season = -1;
+
+// Parse options for explicit season number and path...
+if(isset($oplist['z'])) {
+	$season_ovr = trim($oplist['z']);
+	if($season_ovr == "") {
+		logthis("*** ERROR: -z option requires an argument! (Numerical season number)\n\n",LL_ERROR);
+		exit(101);
+	}
+	logthis("Season set to $season_ovr.\n");
+}
+
+if(isset($oplist['p'])) {
+	$path_ovr = trim($oplist['p']);
+        if($path_ovr == "") {
+                logthis("*** ERROR: -p option requires an argument! (Base path to TV series)\n\n",LL_ERROR);
+                exit(101);
+        }
+} else {
+	logthis("No path specified, working from current directory.\n");
+}
+
+// Check if an IMDB identifier was specified...
+if(isset($oplist['i'])) {
+	$imdb_id = trim($oplist['i']);
+	if($imdb_id == "") {
+		logthis("*** ERROR: -i option requires an argument! (Numerical IMDB id)\n\n",LL_ERROR);
+		exit(101);
+	}
+} else {
+	$imdb_id = false;
+}
+
+if(isset($oplist['L'])) {
+	$lang_spec = trim(strtolower($oplist['L']));
+	if(strlen($lang_spec) != 2) {
+		logthis("*** ERROR: -L option requires a valid two-character ISO 639-1 language specifier (eg. 'en' for English, 'ja' for Japanese, etc.)\n\n",LL_ERROR);
+		exit(101);
+	}
+} else {
+	$lang_spec = false;
+}
+
+// log
+if(isset($oplist['r'])) {
+	$rev_log = trim($oplist['r']);
+	if($rev_log == "") {
+		logthis("*** ERROR: -r option requires a filename!\n\n",LL_ERROR);
+		exit(101);
+	}
+
+	if(($rlog_handle = fopen($rev_log,"w")) === false) {
+		logthis("*** ERROR: Could not open file \"$rev_log\" for writing.\n\n",LL_ERROR);
+		exit(102);
+	}
+	fprintf($rlog_handle,"#!/bin/bash\n# Undo/Revert Script - Automatically generated by tv_rename on ".date("r")."\n\n");
+
+} else {
+	$rev_log = false;
+}
+
+// default: prompt before renaming
+$rename_option = 0;
+
+if($no_rename) {
+	logthis("Renaming disabled.\n",LL_VERBOSE);
+	$rename_option = 1;
+}
+
+if($auto_rename) {
+	logthis("Auto-renaming enabled.\n",LL_VERBOSE);
+	$rename_option = 2;
+}
+
+if($verbose) logthis("Verbose mode enabled.\n",LL_VERBOSE);
+
+if($first_match) logthis("First series match will automatically be selected.\n",LL_VERBOSE);
+
+// thetvdb.com API interface
+
+$api_key = "DE1C5FD2150BEE8D";
+
+if($path_ovr) $cdir = realpath($path_ovr);
+else          $cdir = realpath(getcwd());
+
+logthis("*** Working from [$cdir]\n",LL_MOREINFO);
+
+$zls = explode("/",$cdir);
+
+logthis(print_r($zls,true),LL_DEBUG);
+
+for($i = (count($zls) - 1); $i >= (count($zls) - 2) ; $i--) {
+	//logthis(">> zls[$i] = ".$zls[$i]."\n");
+	$mz = preg_match("/^Season ([0-9]{1,2})/",$zls[$i],$mm);
+	if($mz > 0) {
+		$season = $mm[1];
+	} else {
+		$show = $zls[$i];
+		break;
+	}
+}
+
+if($show_ovr) $show = $show_ovr;
+
+if($imdb_id) logthis("Using IMDB Series ID [$imdb_id]\n");
+else logthis("Using title [$show]\n");
+
+if($season != -1) logthis("Using season [$season]\n");
+logthis("\n");
+
+
+/*
+$mirrors_text = file_get_contents("http://www.thetvdb.com/api/$api_key/mirrors.xml");
+$mirrors = simplexml_load_string($mirrors_text);
+
+print_r($mirrors);
+*/
+
+
+$Amirror = "http://thetvdb.com";
+logthis("Using mirror [$Amirror]\n",LL_VERBOSE);
+
+if($lang_spec) {
+	logthis("Using language [$lang_spec]\n");
+	$langsuffix = urlencode($lang_spec);
+} else {
+	$langsuffix = "";
+}
+
+logthis("Searching for series information...\n",LL_MOREINFO);
+if($imdb_id)	$ssx = file_get_contents($Amirror."/api/GetSeriesByRemoteID.php?imdbid=".urlencode($imdb_id));
+else		$ssx = file_get_contents($Amirror."/api/GetSeries.php?seriesname=".urlencode($show).$langsuffix);
+unset($ssx_xml);
+$ssx_xml = simplexml_load_string($ssx);
+
+//print_r($ssx_xml);
+$results = count($ssx_xml);
+
+// convert annoying SimpleXML object to a nice array
+$ssx_arr = simplexml2array($ssx_xml);
+
+//print_r($ssx_arr);
+//print_r(array_keys($ssx_arr));
+//print_r($ssx_arr['Series']);
+
+if($results == 1) {
+	logthis("Exact match found!\n");
+	logthis(" + Series: ".$ssx_arr['Series']['SeriesName']." (".$ssx_arr['Series']['seriesid'].") [".$ssx_arr['Series']['FirstAired']."]\n");
+	$series_id = $ssx_arr['Series']['seriesid'];
+	$lang = $ssx_arr['Series']['language'];
+
+	if($ssx_arr['Series']['SeriesName'] != $show) {
+		$show = $ssx_arr['Series']['SeriesName'];
+		logthis("Using corrected title [$show].\n");
+	}
+} else if(!$results) {
+	logthis("*** No results returned!\n",LL_WARNING);
+	logthis("Try using the -h option for usage information, or\n",LL_WARNING);
+	logthis("the -s option to manually specify the series name.\n\n\n",LL_WARNING);
+	exit(200);
+} else {
+	logthis("Multiple results returned.\n",LL_PROMPT);
+	foreach($ssx_arr['Series'] as $kkey => $sxs) {
+		logthis(" + (".($kkey+1).") Series: ".$sxs['SeriesName']." (".$sxs['seriesid'].") [".$sxs['FirstAired']."]\n",LL_PROMPT);
+		if($kkey > $MAX_SERIES_RESULTS) break;
+	}
+
+	if($require_exact) {
+		// user specified -x, auto-aborting if ambiguous
+		logthis("Exact match not found. Exiting per -x option.\n\n",LL_WARNING);
+		exit(202);
+	} else if($first_match) {
+		// if -1 option, auto-select first match
+		$userinp = 1;
+	} else {
+		// otherwise, prompt user to select best match
+		for(;;) {
+			logthis("Series #: ",LL_PROMPT);
+			$userinp = intval(fgets(STDIN));
+			if($userinp > 0 && $userinp <= count($ssx_arr['Series'])) break;
+		}
+	}
+	$userinp--;
+
+	$series_id = $ssx_arr['Series'][$userinp]['seriesid'];
+	$lang = $ssx_arr['Series'][$userinp]['language'];
+
+	if($ssx_arr['Series'][$userinp]['SeriesName'] != $show) {
+                $show = $ssx_arr['Series'][$userinp]['SeriesName'];
+                logthis("Using corrected title [$show].\n");
+        }
+}
+
+if(!$series_id) {
+	logthis("Could not retrieve series id!!\n\n",LL_ERROR);
+	exit(201);
+}
+
+logthis("Retrieving series information from server...\n");
+
+//$base_zip = file_get_contents($Amirror."/api/$api_key/series/$series_id/all/${lang}.zip");
+$base_xml = file_get_contents($Amirror."/api/$api_key/series/$series_id/all/${lang}.xml");
+
+$bsx = simplexml_load_string($base_xml);
+$bsx = simplexml2array($bsx);
+
+logthis(print_r($bsx,true),LL_DEBUG);
+
+$xxi = 0;
+foreach($bsx['Episode'] as $key => $epval) {
+	//print_r($epval);
+	//break;
+	$eps_dex[$xxi]['id'] = $epval['id'];
+	$eps_dex[$xxi]['EpisodeName'] = $epval['EpisodeName'];
+	$eps_dex[$xxi]['EpisodeNumber'] = $epval['EpisodeNumber'];
+	$eps_dex[$xxi]['SeasonNumber'] = $epval['SeasonNumber'];
+	$xxi++;
+}
+
+$xxi--;
+
+logthis("Got info for $xxi episodes!\n\n",LL_VERBOSE);
+
+logthis("Examining directory structure...\n");
+
+$dlist = scandir($cdir);
+logthis(print_r($dlist,true),LL_DEBUG);
+
+foreach($dlist as $key => $dval) {
+
+	if($dval[0] == ".") continue;
+
+	if(is_dir($cdir."/".$dval)) {
+		//if(preg_filter("/^Season/","",$dval)) $ddlist[] = $dval;
+		$ddlist[] = $dval;
+	}
+}
+
+if(count($ddlist) < 1) {
+	// flat layout
+	$ddlist[] = ".";
+	$flat = true;
+	if($season == -1) {
+		$season = 1;
+		logthis("Flat layout detected. Assuming Season 1 if not specified in filename.\n");
+	}
+} else {
+	$flat = false;
+}
+
+
+$fmt_spec = Array ("/\<series\>/","/\<season\>/","/\<episode\>/","/\<title\>/");
+
+$tot_files = 0;
+
+foreach($ddlist as $key => $thisdir) {
+	unset($cclist);
+	unset($dlist);
+
+	$reald = realpath($cdir."/".$thisdir."/");
+
+	unset($rn_dex);	// renaming dex
+	$rdxi = 0;
+
+	logthis("\nTraversing directory [$reald]...\n");
+	$dlist = scandir($reald);
+
+	logthis(print_r($dlist,true),LL_DEBUG);
+	
+	foreach($dlist as $kk2 => $dval) {
+		// check for valid extention
+		if(preg_filter($valid_ext,"",$dval)) {
+			// regex match
+			$found = false;
+			foreach($fregex as $rgx) {
+				unset($mm);
+
+				// Regex forced by command line option..
+				if($rgx_force != -1) {
+					$rgx = $fregex[$rgx_force];
+				}
+
+				// Do the matching
+				if(preg_match($rgx,$dval,$mm)) {
+					
+					// find tvdb match
+					$snum = $mm['season'];
+					if($mm['season'] == "") $snum = $season;
+
+					// fix ep# if necessary (for 3-4 digit nums)
+					$epnum = $mm['epnum'];
+					if($epnum > 100) {
+						$epnum = substr($mm['epnum'],-2);
+						$snum  = substr($mm['epnum'],0,(strlen($mm['epnum']) - 2));
+					}
+
+					if($season_ovr != -1) $snum = $season_ovr;
+
+					logthis("Matched [$dval] with regex [$rgx].\n",LL_VERBOSE);
+					logthis("> Se#[$snum] Ep#[$epnum]\n",LL_VERBOSE);
+					
+					if(($dex = find_tvdb_match($snum,$epnum)) != -1) {
+
+						$frep = Array(	$show,
+								sprintf("%02d",$snum),
+								sprintf("%02d",$epnum),
+								$eps_dex[$dex]['EpisodeName']
+							     );
+
+						$outfilex = preg_replace($fmt_spec,$frep,$fmt_str).substr($dval,-4);
+						$outfile  = preg_replace($illegal_chars,"",$outfilex);
+
+						logthis(sprintf("%2d. $dval\n",($rdxi + 1)));
+						logthis(sprintf("   ---> $outfile\n"));
+
+						$rn_dex[$rdxi]['infile'] = $thisdir."/".$dval;
+						$rn_dex[$rdxi]['outfile'] = $thisdir."/".$outfile;
+
+						$found = true;
+						$rdxi++;
+					} else {
+						logthis("Episode not in thetvdb.com database!!\n",LL_WARNING);
+					}
+					break;
+				}
+				if($rgx_force != -1) break;
+			}
+			if(!$found) logthis("Couldn't match [$dval]\n",LL_WARNING);
+		}
+	}
+
+	$tot_files += $rdxi;
+
+	// if no valid files in here, move along...
+	if(!$rdxi) continue;
+
+	// renamer
+	$rn_status = false;
+
+	 // [rename_option == 0 (default)] prompt before renaming each directory
+	if($rename_option == 0) {
+		logthis("\n>>> Okay to rename these files? [y/N] ",LL_PROMPT);
+		$userinp = strtolower(trim(fgets(STDIN)));
+		if($userinp == "y" || $userinp == "yes") $rn_status = true;
+		else $rn_status = false;
+
+	// [rename_option == 1] disable renaming
+	} else if($rename_option == 1) {
+		$rn_status = false;
+
+	// [rename_option == 2] rename without prompting
+	} else if($rename_option == 2) {
+		$rn_status = true;
+
+	// ??? disable
+	} else {
+		$rn_status = false;
+	}
+
+	if($rn_status) {
+		$erz = 0;
+		$erok = 0;
+		foreach($rn_dex as $krd => $trn) {
+			if(!rename($trn['infile'],$trn['outfile'])) {
+				if($rev_log) fprintf($rlog_handle,"# FAILED: \"".$trn['infile']."\" --> \"".$trn['outfile']."\"\n");
+				logthis("*** Error: failed to rename [".$trn['infile']."]!\n",LL_ERROR);
+				$erz++;
+			} else {
+				if($rev_log) fprintf($rlog_handle,"mv \"".$trn['outfile']."\" \"".$trn['infile']."\"\n");
+				$erok++;
+			}
+		}
+		if(!$erz) logthis("All $erok files renamed successfully!!\n");
+		else logthis("Renamed $erok file(s) successfully, $erz file(s) failed.\n");
+	}
+
+	if(!preg_filter("/^Season/","",$thisdir)) {
+		$new_dir = sprintf("Season %d",$snum);
+		if($rename_option == 1) $rn_dir = false;
+		if($rename_option == 2) $rn_dir = true;
+		else {
+			logthis("\n>>> Rename directory from \"$thisdir\" to \"$new_dir\"? [y/N] ",LL_PROMPT);
+			$userinp = strtolower(trim(fgets(STDIN)));
+			if($userinp == "y" || $userinp == "yes") $rn_dir = true;
+			else $rn_dir = false;
+		}
+
+		if($rn_dir) {
+			if(!rename($cdir."/$thisdir",$cdir."/$new_dir")) {
+				if($rev_log) fprintf($rlog_handle,"# FAILED: \"$cdir/$thisdir\" --> \"$cdir/$new_dir\"\n");
+				logthis("*** Error: failed to rename directory!\n",LL_ERROR);
+			} else {
+				if($rev_log) fprintf($rlog_handle,"mv \"$cdir/$new_dir\" \"$cdir/$thisdir\"\n");
+				logthis("Directory renamed successfully!\n");
+			}
+		}
+	}
+}
+
+if(!$tot_files) {
+	logthis("\n*** WARNING: No valid files were detected. Please check target directory.\n\n",LL_WARNING);
+	exit(203);
+}
+
+if($rev_log) {
+	fprintf($rlog_handle,"# --- END OF FILE --- \n\n");
+	fclose($rlog_handle);
+	logthis("rlog file closed.\n",LL_DEBUG);
+}
+
+logthis("\n*** Complete!\n\n",LL_WARNING);
+
+exit(0);
+?>

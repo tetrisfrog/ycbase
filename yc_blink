@@ -1,0 +1,27 @@
+#!/usr/bin/php
+<?php
+
+
+function arr_flatten($inarr) {
+	static $alvl;
+
+	foreach($inarr as $ii => $ax) {
+		if(is_array($ax)) {
+			$axout = arr_flatten($ax,true);
+		}
+	}
+	
+
+}
+
+// get args
+$xargs = getopt("s:b:",Array("src:","basename:"));
+
+foreach($argv as $aix => $aac) {
+
+}
+
+print_r($xargs);
+print_r($argv);
+
+?>

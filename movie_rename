@@ -1,0 +1,207 @@
+#!/usr/bin/php
+<?php
+/*
+Movie Rename - Renames movie files using themoviedb.org database
+Jacob Hipps (tetrisfrog) - http://jhipps.org/w/Movie_rename
+
+Started - 02.17.2012
+
+*/
+
+error_reporting(E_ERROR);
+
+
+// chars to replace/remove
+$xchars = Array(".","_","[","]",":","\'","~","`","limited","dvdrip","internal","brrip","swesub","720p","dvdscr",
+		"screener","unrated","directors cut","remastered","rerelease");
+$xcharr = Array(" "," "," "," ","" ,""  ," ","" ,""       ,""      ,""        ,""     ,""      ,""    ,""      ,
+		""        ,""       ,""             ,""          ,"");
+
+// match regex ?P<season>
+$match  = "/^(?P<title>.+?)[._-\s]?\(?(?P<year>[0-9]{4})\)?[._-\s]?(.+)?$/";
+$match2 = "/(?P<title>.+?)(DVDRip|Xvid|H264|Bluray|BRRip|TVRip)/i";
+
+// API key
+$api_key = "dac85200b593e77a2798153e3aff3a3e";
+
+// testing...
+$list_dir = "/mnt/gatolargo/ian_incoming/_incoming";
+$dest_dir = "/mnt/gatolargo/ian_incoming/sorted";
+
+
+
+exec("ls -1 \"$list_dir\"",$zlist);
+
+$mdi = 0;
+
+foreach($zlist as $kk => $thisz) {
+	unset($matchbox);
+
+	if(!preg_match($match,$thisz,$matchbox)) {
+		if(!preg_match($match2,$thisz,$matchbox)) continue;
+	}
+
+	if(is_dir($list_dir."/".$thisz)) {
+		unset($zzlist);
+		unset($vid_match);
+
+		$l2 = $list_dir."/".$thisz;
+		exec("ls -1 \"$l2\"",$zzlist);
+		$ems = 0;
+		// check to see if the dir has any video files in it
+		foreach($zzlist as $zzx) {
+			if(preg_match("/\.(avi|mkv|mp4|ogm|iso)$/",$zzx)) {
+				if(preg_match("/sample/i",$zzx)) continue; // weed out samples
+				$vid_match[] = $zzx;
+				$ems++; 
+			}
+		}
+		if(!$ems) continue;
+
+		// READY----<<<
+		echo "MATCHED DIR: $thisz\n";
+		echo "\tINNER FILE: ".$vid_match[0]."\n";
+
+		$mdex[$mdi]['filename'] = $vid_match[0];
+		$mdex[$mdi]['fullpath'] = $l2."/".$vid_match[0];
+		$mdex[$mdi]['ems'] = $ems;
+
+		if(($mdat = search_movie($matchbox['title'],$matchbox['year'])) === false) {
+			echo "* SKIPPED\n";
+			$mdex[$mdi]['skip'] = true;
+		} else {
+			$mdex[$mdi]['data'] = $mdat;
+			$mdex[$mdi]['skip'] = false;
+		}
+
+	} else {
+		// single file
+		if(!preg_match("/\.(avi|mkv|mp4|ogm|iso)$/",$thisz)) continue;
+		
+		$mdex[$mdi]['filename'] = $thisz;
+		$mdex[$mdi]['fullpath'] = $list_dir."/".$thisz;
+		$mdex[$mdi]['ems'] = 1;
+		// READY----<<<
+		echo "MATCHED FILE: $thisz\n";
+		if(($mdat = search_movie($matchbox['title'],$matchbox['year'])) === false) {
+			$mdex[$mdi]['skip'] = true;
+			echo "* SKIPPED\n";
+		} else {
+			$mdex[$mdi]['skip'] = false;
+			$mdex[$mdi]['data'] = $mdat;
+		}
+	}
+
+	$mdi++;
+	echo "\n";
+}
+
+// do the renaming...
+
+foreach($mdex as $tk => $tmov) {
+
+	// extract year from release string (YYYY-MM-DD)
+	preg_match("/^([0-9]{4})-([0-9]{2})-([0-9]{2})$/",$tmov['data']['release_date'],$outdata);
+	$year = $outdata[1];
+	$mdex[$tk]['year'] = $year;
+	unset($outdata);
+
+	// extract file extension from filename
+	preg_match("/.([a-zA-Z0-9]{2,4})$/",$tmov['filename'],$outdata);
+	$ext = $outdata[1];
+	$mdex[$tk]['ext'] = $ext;
+	unset($outdata);
+
+	echo "+- ".$tmov['filename']." -> ";
+	if($tmov['skip']) echo "<SKIP>\n";
+	else echo $tmov['data']['title']." (".$year.").".$ext."\n";
+}
+
+echo "Rename these files? (y/N) ";
+fscanf(STDIN,"%s",$rn_confirm);
+if($rn_confirm[0] == "y" || $rn_confirm[0] == "Y") $confirmed = true;
+else $confirmed = false;
+
+echo "\n\n";
+
+if($confirmed) {
+	$fail = 0;
+	$okay = 0;
+	foreach($mdex as $tk => $tmov) {
+		if($tmov['skip']) continue;
+		if(!rename($tmov['fullpath'],$dest_dir."/".$tmov['data']['title']." (".$tmov['year'].").".$tmov['ext'])) {
+			echo "ERROR: Could not rename ".$tmov['fullpath']."\n";
+			$fail++;
+		} else {
+			$okay++;
+		}
+	}
+	if(!$fail) echo "All files renamed successfully! :)\n\n\n";
+	else if(!$okay) echo "Renaming failed. No files were renamed :(\n\n\n";
+	else echo "Renaming complete. There were some errors. ($okay files renamed with $fail errors)\n\n\n";
+
+} else {
+
+	echo "Files NOT renamed.\n\n\n";
+}
+
+
+function search_movie($match_title,$match_year) {
+	global $xchars, $xcharr, $api_key;
+
+	$tit_in = trim(str_ireplace($xchars,$xcharr,$match_title));
+	$year_in = $match_year;
+
+	if($year_in) $yy = " ($year_in)";
+
+	$qs = $tit_in.$yy;
+	//echo "title [$match_title -> $tit_in], year [$year_in -> $yy]\n";
+	echo ">>>>> query = \"$qs\"\n";
+
+	$done = false;
+	while(!$done) {
+		unset($movies);
+		unset($json_in);
+
+		$a_url = "http://api.themoviedb.org/3/search/movie?api_key=$api_key&query=".urlencode($qs);
+
+		$curly = curl_init($a_url);
+		curl_setopt($curly,CURLOPT_RETURNTRANSFER,true);
+		curl_setopt($curly,CURLOPT_HTTPHEADER,array('Accept: application/json'));
+		$json_in = curl_exec($curly);
+
+		$movies = json_decode($json_in, true);
+
+		echo "*** Results:\n";
+		foreach($movies['results'] as $mk => $tmov) {
+			if($tmov['title'] != $tmov['original_title']) $aka = "*AKA: ".$tmov['original_title'];
+			else $aka = "";
+			echo "\t$mk - ".$tmov['title']." (".$tmov['release_date'].") [".$tmov['id']."] $aka\n";
+		}
+
+		$cch = -1;
+		if(strtolower(trim(str_ireplace($xchars,$xcharr,$movies['results'][0]['title']))) != strtolower($tit_in)) {
+			if(count($movies['results'])) {
+				echo "Choose [99=skip,88=query] (0): ";
+				fscanf(STDIN,"%d",$cch);
+			} else {
+				$cch = 88;
+			}
+			if($cch == 88) {
+				echo "Movie Name: ";
+				fscanf(STDIN,"%s",$qs);
+				continue;
+			} else if($cch == 99) return false;
+			if($cch < 0) $cch = 0;
+			$movie_data = $movies['results'][$cch];
+			$done = true;
+		} else {
+			$movie_data = $movies['results'][0];
+			$done = true;
+		}
+	}
+
+	return $movie_data;
+}
+
+?>

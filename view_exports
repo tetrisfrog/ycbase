@@ -1,0 +1,91 @@
+#!/usr/bin/php
+<?php
+
+define("ANSI_OFF",		"\033[m");
+define("ANSI_HI",		"\033[1m");
+define("ANSI_BLK",		"\033[30m");
+define("ANSI_RED",		"\033[31m");
+define("ANSI_GRN",		"\033[32m");
+define("ANSI_YEL",		"\033[33m");
+define("ANSI_BLU",		"\033[34m");
+define("ANSI_MAG",		"\033[35m");
+define("ANSI_CYN",		"\033[36m");
+define("ANSI_WHT",		"\033[37m");
+
+$ANSI_OFF = $color_enable ? "\033[m" : "";
+$ANSI_HI = $color_enable ? "\033[1m" : "";
+$ANSI_BLK = $color_enable ? "\033[30m" : "";
+$ANSI_RED = $color_enable ? "\033[31m" : "";
+$ANSI_GRN = $color_enable ? "\033[32m" : "";
+$ANSI_YEL = $color_enable ? "\033[33m" : "";
+$ANSI_BLU = $color_enable ? "\033[34m" : "";
+$ANSI_MAG = $color_enable ? "\033[35m" : "";
+$ANSI_CYN = $color_enable ? "\033[36m" : "";
+$ANSI_WHT = $color_enable ? "\033[37m" : "";
+
+
+if(isset($_SERVER['YCEXPORT_COLOR']) && !$_SERVER['YCEXPORT_COLOR']) {
+	$color_enable = ($_SERVER['YCEXPORT_COLOR'] != "off" ? true : false);
+} else {
+	if(isset($argv[1]) && $argv[1] == "--nocolor") {
+		$color_enable = false;
+	} else {
+		$color_enable = true;
+	}
+
+}
+$glob_list = Array("_SERVER","_ENV","_REQUEST","_POST","_GET","_FILES","argv");
+$x_filter = "";
+$x_filter_enable = false;
+$pwd = realpath("");
+
+echo $ANSI_OFF."\n\n";
+
+echo "Working from [ ".$ANSI_CYN.$pwd.$ANSI_OFF." ]\n\n";
+
+if($argc > 1) {
+	$x_filter = $argv[1];
+	$x_filter_enable = true;
+	echo "Filter is ON! Filter term [$x_filter]\n\n";
+}
+
+
+foreach($glob_list as $gnum => $glob_val) {
+
+	if(!isset(${$glob_val})) {
+		echo $ANSI_WHT."[ \$".$ANSI_CYN.$glob_val.$ANSI_WHT." ] => ".$ANSI_RED."NOT DEFINED\n\n".$ANSI_OFF;
+		continue;
+	}
+
+	$g_ref = ${$glob_val};
+	$g_count = count($g_ref);
+
+	echo $ANSI_WHT."[ \$".$ANSI_CYN.$glob_val.$ANSI_WHT." ] => ".$ANSI_YEL.$g_count.$ANSI_WHT." items\n".$ANSI_OFF;
+
+	foreach($g_ref as $skey => $sval) {
+		$showme = false;
+
+		if($x_filter_enable) {
+			if(stripos($skey,$x_filter) !== false) {
+				$showme = true;
+			} else {
+				$showme = false;
+			}
+		} else {
+			$showme = true;
+		}
+
+		if($showme == true) {
+			echo $ANSI_GRN."\t".$skey." ".$ANSI_WHT."= \"".$ANSI_YEL.$sval.$ANSI_WHT."\"\n";
+		}
+	}
+
+	echo "\n";
+}
+
+echo $ANSI_OFF."\n\n";
+echo "Complete.\n\n";
+
+fgets(STDIN,1);
+
+?>

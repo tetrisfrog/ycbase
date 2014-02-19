@@ -1,0 +1,25 @@
+#!/bin/bash
+#
+# LOCATORZ
+#
+# We always be findin them nigs hidin in da /usr/bin'z ../local/share's
+#
+# J. Hipps
+# 09 Sept 2013
+#
+
+if [ -f "$1" ]; then
+	echo -e '\nsyntax: $0 <name_of_system_file_to_locate>\n\n'
+	exit 255
+fi
+
+echo -e '\n'
+
+INFNAME="$1"
+
+if ( !([ -n $INFNAME ] || ([ -x $INFNAME]) || ([-r $INFNAME ]]) ) ); then
+	echo -e 'Insufficient permissions, file does not exist, or file is not a normal file.\n\n'
+	exit 200
+fi
+
+LCZX=`locate -b "$INFNAME"`

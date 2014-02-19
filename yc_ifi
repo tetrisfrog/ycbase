@@ -1,0 +1,36 @@
+#!/usr/bin/php
+<?php
+/*
+
+yc_ifi
+
+Scripting/management/troubleshooting tool for local interface monitoring
+and configuration. On Linux, it invokes various commands, depending upon
+what's actually installed (normally the `ip`, `route`, and `arp`
+commands).
+
+It is useful in that it can autoset environment vars, or spew out
+a plain string (eg. a NULL or LF/CRLF terminated line containing
+the IPv4 address for a specified interface).
+
+Copyright (c) 2012 Jacob Hipps
+http://jhipps.neoretro.net/ - tetrisfrog
+
+Licensed under LGPL v3
+
+-
+
+*/
+
+$DBURN_VERSION = "1.1.2";
+$DBURN_DATE = "01 May 2012";
+// 'ip' prog regex
+$if_getter  = '/^(?<if_num>[0-9]{1,2})\:\W*(?<ifname>\w+):\W*\<(?<if_flags>[\w,-\.\+\%_]+)\>\W*(?:mtu (?<link_mtu>[0-9\?\-]+))?\W*([^\\]*)\\';
+$if_getter .= '\W*(?<link_fulltype>\w+\/(?<link_type>\w+))\W*(?<addr_mac>[0-9A-Fa-f\:]+)\W*(?:brd (?<addr_brd>[0-9A-Fa-f:]+))\W*\\';
+$if_getter .= '\W*RX\:\W*(?<stat_rx_keys>[\w ]+?)\W*\\\W*(?<stat_rx_values>[0-9\-\*\? ]+?)\W*\\\W*/gism';
+
+$hIN  = STDIN;		// fopen('php://stdin','r');
+$hERR =	STDERR;		// fopen('php://stderr', 'w';
+$hOUT = STDOUT;		// fopen('php://stdout', 'w');
+
+?>

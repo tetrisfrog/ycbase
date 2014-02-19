@@ -1,0 +1,54 @@
+#!/usr/bin/php
+<?php
+
+// get realpath and process ID
+$pwd = realpath($_SERVER['PWD']);
+$pid = getmypid();
+
+$arg_FNAME = escapeshellarg($argv[1]);
+$bashmash = <<<'EOS'
+	stat --printf='"%n": { "owner": { "uid": [ "%U", %u ], "gid": [ "%G", %g] }, "mode": { "octal": "%a", "str": "%A" }, "fsdata": { "length_bytes": %s, "block_iosize": %o, "hardlinks": %h, "filetype": "%F", "rawmode": "%f", "dev": %d, "block_alloc": %b, "block_size": %B, "inode": %i, "deref_filename": "%N", "dev_major": "%t", "dev_minor": "%T" }, "time": { "atime": [ %X, "%x"], "mtime": [ %Y, "%y" ], "ctime": [ %Z, "%z" ] } },\n' * | perl -pe 's/\n//ms' | perl -pe 's/^(.+),$/\n{ $1 }\n\n/ms'
+EOS;
+
+$bashmash = trim($bashmash);
+//echo "exec line = \"$bashmash\"\n";
+$json_pdat = shell_exec($bashmash);
+
+//echo "shit = \"$json_pdat\"\n\n";
+echo $json_pdat;
+
+// determine how we've been run...
+/*
+if($argc >= 1 && $argv[1] == "-") {
+
+	$json_pdat = file_get_contents("php://stdin");
+
+} else if($argc >= 1 || $argv[1] == "*") {
+
+	if($argc == 1) {
+		$arg_XGLOB = "*";
+	} else {
+		$arg_XGLOB = "";
+
+		foreach($argv as $aki => $akv) {
+			if(!$aki) continue;
+			$arg_XGLOB .= escapeshellarg($akv);
+		}
+	}
+
+	$bashmash = "stat --printf='\"%n\": { \"owner\": { \"uid\": [ \"%U\", %u ], \"gid\": [ \"%G\", %g] }, \"mode\": { \"octal\": \"%a\", \"str\": \"%A\" }, \"fsdata\": { \"length_bytes\": %s, \"block_iosize\": %o, \"hardlinks\": %h, \"filetype\": \"%F\", \"rawmode\": \"%f\", \"dev\": %d, \"block_alloc\": %b, \"block_size\": %B, \"inode\": %i, \"deref_filename\": \"%N\", \"dev_major\": \"%t\", \"dev_minor\": \"%T\" }, \"time\": { \"atime\": [ %X, \"%x\"], \"mtime\": [ %Y, \"%y\" ], \"ctime\": [ %Z, \"%z\" ] } },\n' $arg_XGLOB | perl -pe 's/\n//ms' | perl -pe 's/^(.+),$/\n{ $1 }\n\n/ms')";
+	$json_pdat = exec();
+
+} else {
+	echo "Somebody fucked up....\n\n";
+	exit(1);
+}
+*/
+
+// decode JSON stream
+$statq = json_decode($json_pdat, true);
+
+print_r($statq);
+
+
+?>

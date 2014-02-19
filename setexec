@@ -1,0 +1,30 @@
+#!/usr/bin/php
+<?php
+
+$relpath = "./";
+
+require_once($relpath."yc_bstrap");
+
+$infiles = $argv;
+
+if($argc < 2) {
+	show_help();
+	exit(1);
+} else {
+	foreach($argv as $kk => $tfile) {
+		if(!$kk) continue;
+		if(($rpx = realpath($tfile)) === false) {
+			if($xset['ignore_errors'] === true) {
+				zlog_warning("Unable to locate [$tfile]\n");
+				continue;
+			}
+			zlog_error("Unable to locate [$tfile]!\n");
+			$errlvl = 100 + $kk;
+			if($errlvl > 255) $errlvl = 255;
+		} else {
+			
+		}
+	}
+}
+
+?>
