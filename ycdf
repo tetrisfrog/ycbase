@@ -1,0 +1,232 @@
+#!/usr/bin/php
+<?php
+/**
+ **%%YCDOC*********************************************************************
+ **%%vim: set modelines=40:
+ * 
+ * ycdf - YC Disk usage reporting utility
+ * YellowCrescent DF-esque utility
+ * 
+ * Copyright (c) 2014 Jacob Hipps - tetrisfrog@gmail.com
+ * http://jhipps.neoretro.net/
+ *
+ * Started: 07 Mar 2014
+ * Updated: 07 Mar 2014
+ * Revision: r0
+ *
+ * @package		neoretro\yellowcrescent
+ * @subpackage	ycdf
+ * @category	util.disk
+ * @fullpkg		neoretro.yellowcrescent.ycdf
+ * @version		0.01.0
+ * @author		Jacob Hipps - tetrisfrog@gmail.com
+ * @copyright	Copyright (c) 2014 Jacob Hipps/Neo-Retro Group
+ * @license		GNU LGPLv3 - http://www.gnu.org/licenses/lgpl.html
+ * @param 		vim: set ts=4 sw=4 noexpandtab syntax=php:
+ *
+ * @depends		NONE
+ *
+ * @link		https://github.com/tetrisfrog/ycbase				YCCC Github page
+ * @link		https://neoretro.net/yccc/							YCCC Home Page - Neo-Retro
+ * @link		http://jhipps.neoretro.net/yccc/util/ycdf			YCCC Tracker - ycdf
+ *
+ *****************************************************************************/
+
+define('YCDF_MSET_DEFAULT', 'media');
+
+define('YCSZ_KiB', (float)1024.0);
+define('YCSZ_MiB', (float)1048576.0);
+define('YCSZ_GiB', (float)1073741824.0);
+define('YCSZ_TiB', (float)1099511627776.0);
+
+define('YC_FMZ_GIGAMAX', 1);
+
+error_reporting(E_ERROR);
+
+function ycxdef($cn,$cv,$icase=true) {
+	$GLOBALS[$cn] = $cv;
+	$GLOBALS['_YC']['_'][$cn] =& $GLOBALS[$cn];
+	define($cn,$cv,$icase);
+}
+
+function ycgdref($cn,&$cr) {
+	$GLOBALS['_YC'][$cn] =& $cr;
+}
+
+$GLOBALS['_YC']['zout'] = fopen('php://stdout','w');
+
+/**
+ * ANSI Color tables
+ * Defines ANSI escape codes for changing console text color and clearing the screen
+ * 
+ */
+ycxdef("ANSI_OFF",	"\033[m");
+ycxdef("ANSI_HI",	"\033[1m");
+ycxdef("ANSI_BLK",	"\033[30m");
+ycxdef("ANSI_RED",	"\033[31m");
+ycxdef("ANSI_GRN",	"\033[32m");
+ycxdef("ANSI_YEL",	"\033[33m");
+ycxdef("ANSI_BLU",	"\033[34m");
+ycxdef("ANSI_MAG",	"\033[35m");
+ycxdef("ANSI_CYN",	"\033[36m");
+ycxdef("ANSI_WHT",	"\033[37m");
+ycxdef("ANSI_B4",	"\033[4D");
+ycxdef("ANSI_CLRSCR",	"\033[2J");
+ycxdef("ANSI_CLRLINE",	"\033[K");
+ycxdef("ANSI_HOME",		"\033[0;0f");
+ycxdef("ANSI_XCLEAR",	ANSI_CLRSCR.ANSI_CLRLINE.ANSI_HOME);
+
+
+function zecho($s) {
+	global $TX_OUTPUT;
+
+	if(!$TX_OUTPUT) $TX_OUTPUT = STDOUT;
+	fprintf($TX_OUTPUT,$s);
+}
+
+
+function yc_fmt_fsize($fsintx,$xflags=0) {
+
+	$fsint = intval($fsintx);
+
+	//printf("\n\t\t[[%d]]\n",$fsint);
+
+	if($fsint < 1024) {
+		// bytes
+		$outs = sprintf("%01d B",$fsint);
+	} else if($fsint < YCSZ_MiB) {
+		// kilobytes
+		$outs = sprintf("%01.01f KB",(float)$fsint / YCSZ_KiB);
+	} else if($fsint < YCSZ_GiB) {
+		// megabytes
+		$outs = sprintf("%01.01f MB",(float)$fsint / YCSZ_MiB);
+	} else if($fsint < YCSZ_TiB || ($xflags & YC_FMZ_GIGAMAX)) {
+		// gigabytes
+		$outs = sprintf("%01.02f GB",(float)$fsint / YCSZ_GiB);
+	} else {
+		// terabytes
+		$outs = sprintf("%01.03f TB",(float)$fsint / YCSZ_TiB);
+	}
+
+	return $outs;
+}
+
+function ycdf_calcuse(&$mxzz,$fmtflags=0) {
+
+	$mxzz['used'] = $mxzz['tot'] - $mxzz['free'];
+	$mxzz['f_free'] = yc_fmt_fsize($mxzz['free'],$fmtflags);
+	$mxzz['f_used'] = yc_fmt_fsize($mxzz['used'],$fmtflags);
+	$mxzz['f_tot'] = yc_fmt_fsize($mxzz['tot'],$fmtflags);
+	$mxzz['p_used'] = ((float)$mxzz['used'] / (float)$mxzz['tot']) * (float)100.0;
+	$mxzz['p_free'] = ((float)$mxzz['free'] / (float)$mxzz['tot']) * (float)100.0;
+	$mxzz['fp_used'] = sprintf("%01.02f%%",$mxzz['p_used']);
+	$mxzz['fp_free'] = sprintf("%01.02f%%",$mxzz['p_free']);
+
+}
+
+function yc_diskinfo_p($xpath) {
+	$dfx = Array();
+
+	$dfx['free'] = disk_free_space($xpath);
+	$dfx['tot'] = disk_total_space($xpath);
+
+	ycdf_calcuse($dfx);
+
+	return $dfx;
+}
+
+function ycdf_stylize($mzkey,$mxzz) {
+	$stline  = ANSI_WHT . "[ ". ANSI_YEL . $mzkey;
+	if(isset($mxzz['fstype'])) $stline .= ANSI_WHT . " - " . ANSI_BLU . $mxzz['fstype'];
+	else $stline .= ANSI_WHT . ANSI_WHT;
+	$stline .= ANSI_WHT . " ] ";
+	$stline  = str_pad($stline, 60, " ", STR_PAD_RIGHT);
+
+	$stline .= str_pad(ANSI_RED . "Size " . ANSI_CYN . $mxzz['f_tot'] . ANSI_WHT . " ", 35, ".", STR_PAD_RIGHT);
+	$stline .= str_pad(ANSI_RED . " Free " . ANSI_CYN . $mxzz['f_free'] . ANSI_WHT . " ", 35, ".", STR_PAD_RIGHT);
+	$stline .= ANSI_RED . " Used " . ANSI_CYN . $mxzz['f_used'] . ANSI_WHT . " (" . ANSI_CYN . $mxzz['fp_used'] . ANSI_WHT . ") ";
+	$stline .= ANSI_OFF . "\n";
+
+	return $stline;
+}
+
+function ycdf_parse_mtab($mtab_fname="/etc/mtab") {
+
+	$mtabby = file($mtab_fname);
+
+	foreach($mtabby as $mtablet) {
+		list($mdev,$mpoint,$fstype,$fsopt,$fck1,$fck2) = explode(" ",$mtablet,6);
+		$mto[$mpoint]['dev'] = $mdev;
+		$mto[$mpoint]['mpoint'] = $mpoint;
+		$mto[$mpoint]['fstype'] = $fstype;
+		$mto[$mpoint]['fsopt'] = $fsopt;
+		$mto[$mpoint]['fck1'] = $fck1;
+		$mto[$mpoint]['fck2'] = $fck2;
+	}
+
+	return $mto;
+}
+
+$mountset = strtolower(trim($argv[1]));
+
+$mplist = Array(
+             	'media'  => Array(
+					             	'/mnt/gatolargo' => Array(),
+					             	'/mnt/haqua' => Array(),
+					             	'/mnt/azunyan' => Array()
+					             ),
+             	'system' => Array(
+             	                  	'/' => Array(),
+             	                  	'/tmp' => Array()
+             					 ),
+             	'user'   => Array(
+             						'/home' => Array(),
+             						'/mnt/fattie' => Array()
+             					 )
+             );
+
+if($mountset == "a" || $mountset == "-" || $mountset == "all") {
+	foreach($mplist as $mplz) {
+		foreach($mplz as $mpsi => $mpsz) {
+			$mpx[$mpsi] = $mpsz;
+		}
+	}
+} else if(isset($mplist[$mountset])) {
+	$mset = $mountset;
+	$mpx = $mplist[$mset];
+} else {
+	$mset = YCDF_MSET_DEFAULT;
+	$mpx = $mplist[$mset];
+}
+
+$mpxtot = Array();
+$mtab = ycdf_parse_mtab();
+
+echo "\n";
+
+foreach($mpx as $mpii => $mdatx) {
+	
+	$mpx[$mpii] = yc_diskinfo_p($mpii);
+
+	if(isset($mtab[$mpii])) {
+		$mpx[$mpii]['fstype'] = $mtab[$mpii]['fstype'];
+		$mpx[$mpii]['dev'] = $mtab[$mpii]['dev'];
+	}
+
+	echo ycdf_stylize($mpii,$mpx[$mpii]);
+
+	$mpxtot['free'] += $mpx[$mpii]['free'];
+	$mpxtot['tot'] += $mpx[$mpii]['tot'];
+}
+
+//ycdf_calcuse($mpxtot, YC_FMZ_GIGAMAX);
+ycdf_calcuse($mpxtot);
+$mpx['TOTAL'] = $mpxtot;
+echo str_pad("",100,"-")."\n";
+echo ycdf_stylize("TOTAL",$mpx['TOTAL']);
+
+echo "\n";
+
+
+
+?>
