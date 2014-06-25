@@ -1,0 +1,786 @@
+#!/usr/bin/php
+<?php
+/**
+ **%%YCDOC/2*******************************************************************
+ **%%vim: set modelines=35:
+ *
+ * edparse
+ * YCED Project, EDICT/EDRDG Parser
+ *
+ * Parses the following EDRDG dictionary files and collections:
+ * JMDICT (Japanese dictionary), JMNEDIC (Namae/Nanori/Proper names),
+ * KANJIDIC/KANJIDIC2 (Kanji dictionaries), KRADFILE/KRADFILE2
+ * (Kanji radical composition map)
+ *
+ * EDICT XML File schema: <http://www.edrdg.org/jmdict/edict_doc.html>
+ *
+ * Note: This script uses a considerable amount of memory (4-7GB), in order
+ * to load all entries into memory, then build cross-references between
+ * the dictionaries, kanji, and kanji radical components; then inserts them
+ * into their respective mongoDB collections in batch operations. Newer
+ * versions of PHP (5.5+) with register_globals disabled will consume slightly less
+ * memory. This script uses explicit global registration, and is not
+ * affected.
+ *
+ * Copyright (c) 2013-2014 Jacob Hipps/Neo-Retro Group
+ * https://ycnrg.org/
+ * https://neoretro.net/
+ *
+ * Started: 28 Sep 2013
+ * Updated: 12 Jun 2014
+ * Revision: r12
+ *
+ * @author		Jacob Hipps - jacob@ycnrg.org
+ * @param 		vim: set ts=4 sw=4 noexpandtab syntax=php:
+ *
+ *****************************************************************************/
+
+//require_once("../source/ycbase/yc_bstrap");
+
+error_reporting(E_ERROR);
+
+define('YCD_ANSI',		1);
+// set basedir for datafiles
+//$GLOBALS['_YC']['edict']['basedir'] = realpath(getcwd());
+
+// Priority Index map -- assign "points" based upon the relative
+// frequency and importance of words to show more meaningful
+// examples instead of esoteric bullshit phrases
+$priodex = Array(
+					'ichi1' => 40,
+					'ichi2' => 30,
+					'news1' => 20,
+					'news2' => 15,
+					'spec1' => 30,
+					'spec2' => 15,
+					'gai1'  => 60,
+					'gai2'  => 45,
+					'nf01'  => 500,
+					'nf02'  => 495,
+					'nf03'  => 495,
+					'nf04'  => 495,
+					'nf05'  => 490,
+					'nf06'  => 490,
+					'nf07'  => 480,
+					'nf08'  => 480,
+					'nf09'  => 470,
+					'nf10'  => 470,
+					'nf11'  => 450,
+					'nf12'  => 440,
+					'nf13'  => 430,
+					'nf14'  => 420,
+					'nf15'  => 410,
+					'nf16'  => 400,
+					'nf17'  => 390,
+					'nf18'  => 380,
+					'nf19'  => 370,
+					'nf20'  => 350,
+					'nf21'  => 340,
+					'nf22'  => 330,
+					'nf23'  => 320,
+					'nf24'  => 310,
+					'nf25'  => 300,
+					'nf26'  => 290,
+					'nf27'  => 280,
+					'nf28'  => 270,
+					'nf29'  => 260,
+					'nf30'  => 250,
+					'nf31'  => 240,
+					'nf32'  => 230,
+					'nf33'  => 220,
+					'nf34'  => 210,
+					'nf35'  => 200,
+					'nf36'  => 180,
+					'nf37'  => 170,
+					'nf38'  => 165,
+					'nf39'  => 145,
+					'nf40'  => 120,
+					'nf41'  => 100,
+					'nf42'  => 95,
+					'nf43'  => 90,
+					'nf44'  => 75,
+					'nf45'  => 60,
+					'nf46'  => 45,
+					'nf47'  => 30,
+					'nf48'  => 15
+				);
+
+
+function ycxdef($cn,$cv,$icase=true) {
+	$GLOBALS[$cn] = $cv;
+	$GLOBALS['_YC']['_'][$cn] =& $GLOBALS[$cn];
+	define($cn,$cv,$icase);
+}
+
+function ycgdref($cn,&$cr) {
+	$GLOBALS['_YC'][$cn] =& $cr;
+}
+
+function yc_xdef($xdefx,$dname,$dval) {
+	$YC_ANSI_PREFIX = 'ANSI_';
+
+	//$GLOBALS['_YC']['ANSI'][$dname] = $dval;
+	$GLOBALS['_YC']['ansi'][strtolower($dname)] = $dval;
+
+	ycxdef($YC_ANSI_PREFIX.$dname, $dval);		// ANSI_XCOLORX
+	ycxdef($dname, $dval, false);				// XCOLORX (no ANSI prefix)
+
+}
+
+function get_attrib($iobj, $aname) {
+	$xx = (Array) $iobj->attributes();
+	if(!isset($xx['@attributes'][$aname])) return false;
+	else return $xx['@attributes'][$aname];
+}
+
+function zecho($xstr) {
+	 fprintf(STDERR,"%s",$xstr);
+}
+
+/**
+ * Convert SimpleXMLElement object to array
+ * Copyright Daniel FAIVRE 2005 - www.geomaticien.com
+ * Copyleft GPL license
+ */
+function simplexml2array($xml) {
+   if (get_class($xml) == 'SimpleXMLElement') {
+       $attributes = $xml->attributes();
+       foreach($attributes as $k=>$v) {
+           if ($v) $a[$k] = (string) $v;
+       }
+       $x = $xml;
+       $xml = get_object_vars($xml);
+   }
+   if (is_array($xml)) {
+       if (count($xml) == 0) return (string) $x; // for CDATA
+       foreach($xml as $key=>$value) {
+           $r[$key] = simplexml2array($value);
+       }
+       if (isset($a)) $r['@'] = $a;    // Attributes
+       return $r;
+   }
+   return (string) $xml;
+}
+
+yc_xdef(YCD_ANSI,	'OFF',		"\033[m");
+yc_xdef(YCD_ANSI,	'HI',		"\033[1m");
+yc_xdef(YCD_ANSI,	'BLK',		"\033[30m");
+yc_xdef(YCD_ANSI,	'RED',		"\033[31m");
+yc_xdef(YCD_ANSI,	'GRN',		"\033[32m");
+yc_xdef(YCD_ANSI,	'YEL',		"\033[33m");
+yc_xdef(YCD_ANSI,	'BLU',		"\033[34m");
+yc_xdef(YCD_ANSI,	'MAG',		"\033[35m");
+yc_xdef(YCD_ANSI,	'CYN',		"\033[36m");
+yc_xdef(YCD_ANSI,	'WHT',		"\033[37m");
+
+
+
+function filter_by(&$inset,$fvalue,$fterm,$fterm2=false) {
+
+	$sterm = trim($fvalue);
+
+	$rez_count = 0;
+	foreach($inset as $iii => $iik) {
+		if( ($fterm2 && $iik[$fterm][$fterm2] == $fvalue) || (!$fterm2 && $iik[$fterm] == $fvalue) ) {
+			$xout[$rez_count] = $iik;
+		}
+	}
+}
+
+function yc_xml_getlang($sxobj,$deflang="eng") {
+	$xmlin = $sxobj->asXML();
+	if(!preg_match('/xml:lang\s*=\s*[\'\"](?<xlang>[a-zA-Z]{2,3})[\'\"]/i',$xmlin,$mtxout)) return $deflang;
+	else return $mtxout['xlang'];
+}
+
+
+function yc_edx_parse_kanji($edict_filename,&$kcrad_index=NULL) {
+	zecho("[KANJIDIC2] Reading XML file '$edict_filename'...\n");
+
+	//$edict_xstr = file_get_contents($edict_filename);
+	//$sxl = new SimpleXMLElement($edict_xstr);
+
+	$sxl = simplexml_load_file($edict_filename);
+	unset($sxl->comment);
+
+	zecho("[KANJIDIC2] Parsing & Filtering...\n");
+
+	foreach($sxl->character as $cki => $ckc) {
+		if(isset($curka)) unset($curka);
+
+		$curka['kanji'] = (String) $ckc->literal;
+
+		//zecho(ANSI_WHT . $ckc->literal . ANSI_OFF . "\n");
+
+
+		// code points
+		foreach($ckc->codepoint->cp_value as $cpii => $cpoint) {
+			$anx = get_attrib($cpoint,'cp_type');
+			$curka['codepoint'][$anx] = (String) $cpoint;
+		}
+
+		// radicals
+		foreach($ckc->radical->rad_value as $rdii => $krad) {
+			$rtype = get_attrib($krad,'rad_type');
+			$curka['radical'][$rtype] = (String) $krad;
+		}
+
+		// misc
+		$curka['grade'] = (String) $ckc->misc->grade;
+		if(is_array($ckc->misc->stroke_count)) $curka['stroke_count'] = (Array) $ckc->misc->stroke_count;
+		else $curka['stroke_count'] = (String) $ckc->misc->stroke_count;
+		$curka['freq'] = (String) $ckc->misc->freq;
+		$curka['jlpt'] = (String) $ckc->misc->jlpt;
+
+
+		// xref
+		foreach($ckc->dic_number->dic_ref as $kxi => $kxv) {
+			$xrdr = get_attrib($kxv,'dr_type');
+			if($xrdr == "moro") {
+				$xrvol = get_attrib($kxv,'m_vol');
+				$xrpage = get_attrib($kxv,'m_page');
+				$curka['xref'][$xrdr] = sprintf("%02d:%04d/%s",$xrvol,$xrpage,$kxv);
+			} else {
+				$curka['xref'][$xrdr] = (String) $kxv;
+			}
+		}
+
+		// qcode
+		foreach($ckc->query_code->q_code as $kxi => $kxv) {
+			$xrdr = get_attrib($kxv,'qc_type');
+			$curka['qcode'][$xrdr] = (String) $kxv;
+		}
+
+		// reading
+		foreach($ckc->reading_meaning->rmgroup->reading as $kxi => $kxv) {
+			$xrdr = get_attrib($kxv,'r_type');
+			$curka['reading'][$xrdr][] = (String) $kxv;
+		}
+
+		// meaning
+		foreach($ckc->reading_meaning->rmgroup->meaning as $kxi => $kxv) {
+			$xrdr = get_attrib($kxv,'m_lang');
+			if(!$xrdr) $xrdr = "en";
+			$curka['meaning'][$xrdr][] = (String) $kxv;
+		}
+
+		// nanori
+		foreach($ckc->reading_meaning->nanori as $kxi => $kxv) {
+			$curka['reading']['nanori'][] = (String) $kxv;
+		}
+
+		// if kcrad_index is specified, lookup component radical indicies
+		if($kcrad_index) {
+			if(isset($kcrad_index[$curka['kanji']])) {
+				$curka['krad'] = $kcrad_index[$curka['kanji']];
+			}
+		}
+
+		//zecho("[ ". ANSI_RED . $anx . ANSI_OFF . " ] -> ". ANSI_GRN . $cpoint . ANSI_OFF . "\n");
+
+		//print_r($ckc);
+		//print_r($curka);
+		$kdex[$curka['kanji']] = $curka;
+	}
+
+	//print_r($kdex);
+
+	zecho("[KANJIDIC2] Parsing complete. Total Kanji = ".count($kdex)."\n");
+
+	return $kdex;
+
+}
+
+function yc_edx_parse_jmdict($edict_filename) {
+	global $priodex;
+	zecho("[JMdict] Reading XML file '$edict_filename'...\n");
+
+	//$edict_xstr = file_get_contents($edict_filename);
+	//$sxl = new SimpleXMLElement($edict_xstr);
+
+	$sxl = simplexml_load_file($edict_filename);
+	//unset($sxl->comment);
+
+	zecho("[JMdict] Parsing & Filtering...\n");
+
+	//print_r($sxl);
+	//print_r($sxl->entry);
+	//exit();
+
+	$next_exit = false;
+
+	$zxi_base = 3000000;
+	$ccxii = 0;
+
+	foreach($sxl->entry as $cki => $ckc) {
+		if(isset($curka)) unset($curka);
+
+		// [ent_seq] Entry sequence identifier
+		if(isset($ckc->ent_seq)) {
+			$curka['ent_seq'] = (String) $ckc->ent_seq;
+			$zx_index = $curka['ent_seq'];
+		} else {
+			$zx_index = $zxi_base + $ccxii;
+		}
+
+		//zecho(ANSI_YEL . "\n".str_pad("",120,"#")."\n".ANSI_OFF);
+		//zecho(ANSI_RED . " " . str_pad($curka['ent_seq'] ." ". ANSI_YEL,124,"#") . ANSI_OFF . "\n");
+		//zecho(ANSI_YEL . str_pad("",120,"#")."\n".ANSI_OFF);
+
+		/***[k_ele] Kanji Elements
+		 *
+		 *			<k_ele> {*} Kanji Element Group
+		 *				<keb>有難うございます</keb> {1} Orthographic phrase
+		 *				<ke_inf>&io;</ke_inf> {*} Coded info identifier [enum]
+		 *				<ke_pri>spec1</ke_pri> {*} Statistical priority grade [enum]
+		 *			</k_ele>
+		 ***/
+		$kixx = 0;
+		$kf_pmax = 0;
+		foreach($ckc->k_ele as $cpii => $cptt) {
+			// [keb] Kanji phrase
+			$curka['k_ele'][$kixx]['keb'] = (String) $cptt->keb;
+
+			// [ke_inf] Info
+			foreach($cptt->ke_inf as $cpsi => $cpts) {
+				$curka['k_ele'][$kixx]['ke_inf'][key($cpts)] = (String) $cpts;
+			}
+
+			// [ke_pri] Priority rating
+			foreach($cptt->ke_pri as $cpts) {
+				$tpmx = (String) $cpts;
+				$curka['k_ele'][$kixx]['ke_pri'][] = $tpmx;
+				$kf_pmax += $priodex[$tpmx];
+			}
+			$curka['kf_pmax'] = $kf_pmax;
+
+			$kixx++;
+		}
+
+		/***[r_ele] Reading Elements
+		 *
+		 *			<r_ele> {*} Reading Element Group
+		 *				<reb>ありがとうございます</keb> {1} Phonetic phrase
+		 *				<re_nokanji /> {?} Indicates this phonetic reading may differ to the lexigraphic kanji meaning  [flag]
+		 *				<re_restr>有難うございます</ke_restr> {?} If present, denotes that this reading only applies to a specific kanji element group; otherwise all reading and all kanji elements are commonly grouped
+		 *				<re_inf>&io;</re_inf> {*} Coded info identifier [enum]
+		 *				<re_pri>spec1</re_pri> {*} Statistical priority grade [enum]
+		 *			</r_ele>
+		 ***/
+		$kixx = 0;
+		$rf_pmax = 0;
+		foreach($ckc->r_ele as $cpii => $cptt) {
+			// [reb] Reading phrase
+			$curka['r_ele'][$kixx]['reb'] = (String) $cptt->reb;
+
+			// [re_nokanji] Corresponding kanji meaning does not exactly match reading
+			if(isset($cptt->re_nokanji)) $curka['r_ele'][$kixx]['re_nokanji'] = true;
+
+			// [re_restr] Corresponding kanji string(s) which matches this reading
+			foreach($cptt->re_restr as $cpts) {
+				$curka['r_ele'][$kixx]['re_restr'][] = (String) $cpts;
+			}
+
+			// [re_inf] Info
+			foreach($cptt->re_inf as $cpts) {
+				$curka['r_ele'][$kixx]['re_inf'][key($cpts)] = (String) $cpts;
+			}
+
+			// [re_pri] Priority rating
+			foreach($cptt->re_pri as $cpts) {
+				$tpmx = (String) $cpts;
+				$curka['r_ele'][$kixx]['re_pri'][] = $tpmx;
+				$rf_pmax += $priodex[$tpmx];
+			}
+			$curka['rf_pmax'] = $rf_pmax;
+
+			$kixx++;
+		}
+
+		/***[info] Info & Entry Metadata Elements (JMdict only)
+		 *
+		 *			<info>  {?} Entry metadata & additional info
+		 *				<bibl> {*} Bibliography
+		 *					<bib_tag></bib_tag> {1} Biblio coded tag
+		 *					<bib_txt></bib_txt> {1} Biblio entry
+		 *				</bibl>
+		 *				<etym></etym> {*} Etymology info
+		 *				<links> {*} Links
+		 *					<link_tag></link_tag> {1} Link tag/name
+		 *					<link_desc></link_desc> {1} Description
+		 *					<link_uri></link_uri> {1} Link URL/URI
+		 *				</links>
+		 *				<audit> {*} Entry modification metadata/dates
+		 *					<upd_date></upd_date> {1} Date string
+		 *					<upd_detl></upd_detl> {1} Update details
+		 *				</audit>
+		 *			</info>
+		 ***/
+		/*
+		$kixx = 0;
+		foreach($ckc->r_ele as $cpii => $cptt) {
+			// [reb] Reading phrase
+			$curka['r_ele'][$kixx]['reb'] = (String) $cptt->reb;
+
+			// [re_nokanji] Corresponding kanji meaning does not exactly match reading
+			if(isset($cptt->re_nokanji)) $curka['r_ele'][$kixx]['re_nokanji'] = true;
+
+			// [re_restr] Corresponding kanji string(s) which matches this reading
+			foreach($cptt->re_restr as $cpts) {
+				$curka['r_ele'][$kixx]['re_restr'][] = (String) $cpts;
+			}
+
+			// [re_inf] Info
+			foreach($cptt->re_inf as $cpts) {
+				$curka['r_ele'][$kixx]['re_inf'][] = (String) $cpts;
+			}
+			// [re_pri] Priority rating
+			foreach($cptt->re_pri as $cpts) {
+				$curka['r_ele'][$kixx]['re_pri'][] = (String) $cpts;
+			}
+
+			$kixx++;
+		}
+		*/
+
+
+		/***[sense] Meaning/idea (JMdict only)
+		 *
+		 ***/
+		$kixx = 0;
+		foreach($ckc->sense as $cpii => $cptt) {
+			//print_r($cptt);
+
+			// [stagk] Meaning/sense restricted to specified keb entries
+			foreach($cptt->stagk as $cpts) {
+				$curka['sense'][$kixx]['stagk'][] = (String) $cpts;
+			}
+
+			// [stagr] Meaning/sense restricted to specified reb entries
+			foreach($cptt->stagr as $cpts) {
+				$curka['sense'][$kixx]['stagr'][] = (String) $cpts;
+			}
+
+			// [xref] Cross-reference to another entry
+			foreach($cptt->xref as $cpts) {
+				$curka['sense'][$kixx]['xref'][] = (String) $cpts;
+			}
+
+			// [ant] Antonym cross-reference
+			foreach($cptt->ant as $cpts) {
+				$curka['sense'][$kixx]['ant'][] = (String) $cpts;
+			}
+
+			// [pos] Part-of-speech indicators
+			foreach($cptt->pos as $cpts) {
+				//$curka['sense'][$kixx]['pos'][key($cpts)] = (String) $cpts;
+				$curka['sense'][$kixx]['pos'][] = key($cpts);
+			}
+
+			// [field] Specify related field of study (computer science, medicine, etc.)
+			foreach($cptt->field as $cpts) {
+				//$curka['sense'][$kixx]['field'][key($cpts)] = (String) $cpts;
+				$curka['sense'][$kixx]['field'][] = key($cpts);
+			}
+
+			// [misc] Misc indicator codes
+			foreach($cptt->misc as $cpts) {
+				//$curka['sense'][$kixx]['misc'][key($cpts)] = (String) $cpts;
+				$curka['sense'][$kixx]['misc'][] = key($cpts);
+			}
+
+			// [lsource] Loan-word source language
+			foreach($cptt->lsource as $cpts) {
+				$xaws = get_attrib($cpts,'ls_wasei');
+				$xalang = yc_xml_getlang($cpts);
+				// missing attrib: 'ls_type', but is not yet utilized in JMdict anyway
+				if($xaws == "y") $xalang = "ls_wasei";
+				else if(!$xalang) $xalang = "eng";
+				$curka['sense'][$kixx]['lsource'][$xalang][] = (String) $cpts;
+			}
+
+			// [dial] Region-specific dialects
+			foreach($cptt->dial as $cpts) {
+				$curka['sense'][$kixx]['dial'][] = (String) $cpts;
+			}
+
+			/*
+			zecho("** GLOSS :: OBJ:\n");
+			print_r($cptt->gloss->items[0]);
+			zecho("** GLOSS :: ATTRIBS:\n");
+			print_r($cpts->gloss->items[0]->attributes());
+			*/
+			// [gloss] Gloss / Meaning / Idea
+			foreach($cptt->gloss as $cpts) {
+				//zecho("xml:lang = '".$cpts->getAttribute('xml:lang')."'\n")
+				$xagend = get_attrib($cpts,'g_gend');
+				$xalang = yc_xml_getlang($cpts);
+				if($xagend) $xalang = $xagend;
+				else if(!$xalang) $xalang = "eng";
+				$curka['sense'][$kixx]['gloss'][$xalang][] = (String) $cpts;
+			}
+
+			// [example] Example phrase
+			foreach($cptt->dial as $cpts) {
+				$curka['sense'][$kixx]['example'][] = (String) $cpts;
+			}
+
+			// [s_inf] Sense usage information
+			foreach($cptt->s_inf as $cpts) {
+				$curka['sense'][$kixx]['s_inf'][] = (String) $cpts;
+			}
+
+			// [pri] Primary/Core Idea or message
+			foreach($cptt->pri as $cpts) {
+				$curka['sense'][$kixx]['pri'][] = (String) $cpts;
+			}
+
+
+			$kixx++;
+		}
+
+
+		/***[trans] Translated or Transliterated text (JMnedict only -- nanori and proper nouns)
+		 *
+		 ***/
+		$kixx = 0;
+		foreach($ckc->trans as $cpii => $cptt) {
+			//print_r($cptt);
+
+			// [name_type] Name type indicator key
+			foreach($cptt->name_type as $cpts) {
+				//$curka['trans'][$kixx]['name_type'][key($cpts)] = (String) $cpts;
+				$curka['trans'][$kixx]['name_type'][] = key($cpts);
+			}
+
+			// [trans_det] Translated or Transliterated meaning/pronunciation
+			foreach($cptt->lsource as $cpts) {
+				$xalang = yc_xml_getlang($cpts);
+				$curka['sense'][$kixx]['lsource'][$xalang][] = (String) $cpts;
+			}
+
+			$kixx++;
+		}
+
+		//print_r($curka);
+
+		$kdex[$zx_index] = $curka;
+		$ccxii++;
+
+		if($next_exit) exit();
+	}
+
+	//print_r($kdex);
+
+	zecho("[JMdict] Parsing complete. Total entries = ".count($kdex)."\n");
+
+	return $kdex;
+
+}
+
+function yc_edx_parse_krad($kr_fname,$krad_db=NULL) {
+	// Read in the KRADFILE, which is encoded in JIS X 0212 (EUC-JP)
+	// and convert to UTF-8 encoding
+	zecho("[KRADFILE] Reading input file (JIS X 0212 / EUC-JP encoding) - '$kr_fname'...\n");
+	$enc_in = file_get_contents($kr_fname);
+	$eout = mb_convert_encoding($enc_in,"UTF-8","EUC-JP");
+
+	$krad = explode("\n",$eout);
+
+	if($krad_db) $krdex = $krad_db;
+
+	zecho("[KRADFILE] Parsing...\n");
+
+	$kddi = 0;
+	$kddup = 0;
+	foreach($krad as $lnum => $ltxt) {
+		if(isset($kklist)) unset($kklist);
+		if($ltxt[0] == "#") continue;
+
+		$kkj = "";
+		list($kkj,$kcom) = explode(" : ",$ltxt);
+		if(!$kkj) continue;
+		//zecho(ANSI_WHT . "[ ". ANSI_GRN . $kkj . ANSI_WHT . " ] " . ANSI_OFF);
+
+		$kklist = explode(" ",$kcom);
+		/*
+		foreach($kklist as $kki => $kkc) {
+			zecho("\t".ANSI_WHT."$kki -> ". ANSI_CYN . "$kkc\n" . ANSI_OFF);
+		}
+		*/
+
+		if(isset($krdex[$kkj])) {
+			//zecho(ANSI_RED."************* Kanji 「" . ANSI_YEL . $kkj . ANSI_RED . "」 already exists! ****************\n".ANSI_OFF);
+			$kddup++;
+		}
+		$krdex[$kkj] = $kklist;
+		$kddi++;
+	}
+
+	zecho("[KRADFILE] Parsing complete. Parsed entries = $kddi / Total entries = ".count($krdex)." / Duplicates ignored = $kddup\n");
+	return $krdex;
+}
+
+function yc_edx_parse_tanaka($tc_fname) {
+
+	zecho("[Tanaka Corpus] Reading & parsing input file (UTF-8 encoding) - '$tc_fname'...\n");
+	$krlz = file($tc_fname);
+
+	$kdx = 1;
+	$tci = 0;
+	foreach($krlz as $kdss) {
+		if($kdx % 2) $a_sent = substr($kdss,3);
+		else {
+			$b_sent = substr($kdss,3);
+			list($a_jp, $a_en) = explode("\t",$a_sent,2);
+			list($a_enx, $tc_id) = explode("#ID=",$a_en,2);
+			$tcdex[$tci]['en'] = $a_enx;
+			$tcdex[$tci]['jp'] = $a_jp;
+			$tcdex[$tci]['jp_b'] = $b_sent;
+			$tcdex[$tci]['id'] = $tc_id;
+			$tci++;
+		}
+		$kdx++;
+	}
+
+	zecho("[Tanaka Corpus] Complete. Parsed entries = ".count($tcdex)."\n");
+	return $tcdex;
+}
+
+function yc_edx_mongo_init($mdb_name="yc_edict",$mdb_host=NULL) {
+	zecho("[mongo_init] Connecting to MongoDB...\n");
+
+	if($mdb_host) $moncon = new MongoClient($mdb_host);
+	else $moncon = new MongoClient();
+	if(!$moncon) {
+		zecho("[mongo_init] Connection to mongoDB daemon failed! :( [".($mdb_host ? $mdb_host : "localhost")."]\n");
+		return false;
+	} else {
+		zecho("[mongo_init] Connected OK!\n");
+	}
+
+	if(($mondb = $moncon->selectDB($mdb_name))) {
+		zecho("[mongo_init] Database selected OK! [$mdb_name]\n");
+	} else {
+		zecho("[mongo_init] Database selection failed! :( [$mdb_name]\n");
+		return false;
+	}
+
+	return $mondb;
+}
+
+function yc_edx_mongo_supersert($mondbx,$monclx,$ddex) {
+
+	$ddex_sz = count($ddex);
+	zecho("[mongo_supersert] Performing iterative insert operation [$ddex_sz entries]\n");
+
+	if(($chichan = $mondbx->selectCollection($monclx))) {
+		zecho("[mongo_supersert] Selected collection OK [$monclx]\n");
+	} else {
+		zecho("[mongo_supersert] Failed to select collection [$monclx] in current database! :( \n");
+		return false;
+	}
+
+	$itx = 0;
+	foreach($ddex as $dkey => $ddat) {
+		$itx++;
+		//zecho("\t($itx / $ddex_sz) - Inserting [$dkey]\n");
+		$chichan->insert($ddat);
+	}
+
+	zecho("[mongo_supersert] $itx entries/documents inserted!\n");
+
+}
+
+$fontdex =	Array(
+				'kanji-strokes' => "/­usr/­share/­fonts/­truetype/­kanjistrokeorders/­KanjiStrokeOrders_v3.000.ttf",
+				'kanji-block' => "/­usr/­share/­fonts/­truetype/­mplus/­mplus-1c-medium.ttf"
+			);
+
+/*
+$dxdex =	Array(
+               	'comrad' => Array(
+               	                	'name' => "kradfile",
+               	                	'desc' => "Kanji radical map file",
+
+               	                	'file_basepath' => (isset($_YC['edict']['basedir']) ? $_YC['edict']['basedir'] : getcwd()),
+               	                	'file' => Array('kradfile.euc','kradfile2.euc'),
+               	                	'file_encoding' => "ENC-JP",
+               	                	'callback' => 'yc_edx_parse_krad',
+               	                	'callback_proto' => Array('#file','@comrad'),
+               	                	'repodex' => Array(
+               	                	                	'kradfile.euc' => Array(
+               	                	                	                        	'url' => 'ftp://ftp.monash.edu.au/pub/nihongo/kradfile.gz',
+               	                	                								'callback' => 'gzopen'
+               	                	                							)
+               	                	                  )
+               	                  ),
+               	'k2dex' => Array(
+               	                	'name' => "kanjidex",
+               	                	'desc' => "Kanji dictionary",
+               	                	'homepage' => "http://www.csse.monash.edu.au/~jwb/kanjidic2/",
+               	                	'author' => "Jim Breen & The Electronic Dictionary Research and Development Group",
+               	                	'file_basepath' => (isset($_YC['edict']['basedir']) ? $_YC['edict']['basedir'] : getcwd()),
+               	                	'file' => Array('kanjidic2.xml'),
+               	                	'file_encoding' => "UTF-8",
+               	                	'callback' => 'yc_edx_parse_kanji',
+               	                	'callback_proto' => Array('#file','@comrad'),
+               	                	'repodex' => Array(
+               	                	                	'kanjidic2.xml' => Array(
+               	                	                	                        	'url' => 'http://www.csse.monash.edu.au/~jwb/kanjidic2/kanjidic2.xml.gz',
+               	                	                								'callback' => 'gzopen'
+               	                	                							)
+               	                	                  )
+               	                  ),
+               	'jmdex' => Array(),
+               	'nandex' => Array(),
+               	'tcdex' => Array(),
+            );
+*/
+
+$edf_jmdict = realpath("jmdict.xml");
+$edf_nedict = realpath("jmnedict.xml");
+$edf_kanji2 = realpath("kanjidic2.xml");
+$edf_krad   = realpath("kradfile.euc");
+$edf_krad2  = realpath("kradfile2.euc");
+$edf_tanaka = realpath("tcorpus.utf");
+
+$comrad = yc_edx_parse_krad($edf_krad);
+$comrad = yc_edx_parse_krad($edf_krad2,$comrad);
+$k2dex  = yc_edx_parse_kanji($edf_kanji2,$comrad);
+$jmdex  = yc_edx_parse_jmdict($edf_jmdict);
+$nandex = yc_edx_parse_jmdict($edf_nedict);
+$tcdex  = yc_edx_parse_tanaka($edf_tanaka);
+
+$rubyred = yc_edx_mongo_init("yc_edict");
+yc_edx_mongo_supersert($rubyred,"kanji",$k2dex);
+yc_edx_mongo_supersert($rubyred,"jmdict",$jmdex);
+yc_edx_mongo_supersert($rubyred,"jmndict",$nandex);
+yc_edx_mongo_supersert($rubyred,"tcorpus",$tcdex);
+
+//echo json_encode($k2dex);
+
+/*
+echo "\n>>>>>>>>>>>>>>>>>>>>>>>ARRAY_BEGIN>>\n\n";
+print_r($sxl->character);
+echo "\n<<<<<<<<<<<<<<<<<<<<<<<ARRAY_END<<\n";
+echo "<<<<<EOF\n";
+exit();
+
+
+$kdexT = 0;
+$dict_count = count($sxl->character);
+echo "dict_count = $dict_count\n";
+
+for($dx = 0; $dx < $dict_count; $dx++) {
+	$ck = $sxl[$dx];
+	//if(($ckc = count($ck)) < 1) continue;
+	$kdex[$kdexT]['literal'] = $ck->literal;
+	$kdexT++;
+}
+
+*/
+
+//print_r($k2dex);
+
+?>
