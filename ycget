@@ -1,0 +1,420 @@
+#!/usr/bin/php
+<?php
+/**
+ **%%YCDOC*********************************************************************
+ **%%vim: set modelines=40:
+ *
+ * ycget - Download files over the internets
+ * YellowCrescent network file get'er
+ *
+ * Download files from preset locations/servers and pathes via
+ * HTTP/HTTPS (curl), SSH (libssh2), or raw socket
+ *
+ * Copyright (c) 2014 Jacob Hipps - tetrisfrog@gmail.com
+ * https://ycnrg.org/
+ * https://neoretro.net/
+ *
+ * Started: 13 May 2014
+ * Updated: 13 May 2014
+ * Revision: r0
+ *
+ * @package		neoretro\yellowcrescent
+ * @subpackage	ycget
+ * @category	net_util,file_util,util
+ * @fullpkg		neoretro.yellowcrescent.ycget
+ * @version		0.01.0
+ * @author		Jacob Hipps - tetrisfrog@gmail.com
+ * @copyright	Copyright (c) 2014 Jacob Hipps/Neo-Retro Group
+ * @license		GNU LGPLv3 - http://www.gnu.org/licenses/lgpl.html
+ * @param 		vim: set ts=4 sw=4 noexpandtab syntax=php:
+ *
+ * @depends		php:curl,pecl:ssh2,pecl:xattr,ssh-keygen,?rhash
+ *
+ * @link		https://github.com/tetrisfrog/ycbase				YCCC Github page
+ * @link		https://neoretro.net/yccc/							YCCC Home Page - Neo-Retro
+ * @link		http://ycnrg.org/yccc/netutil/ycget					YCCC Tracker - ycget
+ *
+ *****************************************************************************
+ *
+ * Dependency note:
+ *		  This script depends on a few non-standard PHP extensions, including
+ * ssh2 and xattr; rhash is optionally used for hashing and checksumming
+ * files instead of the builtin hashing routines, as it is significantly faster
+ * than PHP's various implementations on x86 platforms.
+ *
+ * Installting ssh2 & xattr:
+ *		- Ensure that libssh2-1-dev & libattr1-dev are installed (or equivalents)
+ *		  via aptitude, yum, ports, or whatever package manager you are using
+ *		- Install ssh2 and xattr via PECL
+ *			`pecl install xattr`
+ *			`pecl install ssh2`
+ *		- Ensure the extensions are loaded at runtime if this step is not
+ *		  done automatically by PECL by adding the following lines
+ *		  to an ini file in /etc/php5/cli/conf.d or wherever PHP's config is located
+ *			extension="xattr.so"
+ *			extension="ssh2.so"
+ *		- Run `php -m` to ensure the modules are loaded by the CLI interpreter
+ *		- If you use Apache, it's probably a bad idea to enable ssh2 and xattr in mod_php or
+ *		  (F)CGI implementatons for various reasons. Especially if you use XFS, NTFS, or
+ *		  Mac-based filesystems, as the allowed extended attribute space is large enough
+ *		  to house malicious or unwanted binaries (>= 64KB) and would likely go undetected
+ *		  by most anti-malware implementations if the creator was devious and clever enough
+ *
+ * Install rhash on Debian/Ubuntu/Mint: `sudo apt-get install rhash`.
+ * Install rhash on other distros: Most RedHat-based distros will require
+ *   compilation from source. You can grab the source by cloning the git repo:
+ *   `git clone https://github.com/rhash/RHash.git`, then `cd` to it and run
+ *   `./configure`, `make`, then as superuser, `make install`.
+ *
+ *****************************************************************************/
+
+error_reporting(E_ERROR);
+
+// Log levels
+define('LL_SILENT',		-1);
+define('LL_ERROR',		0);
+define('LL_WARNING',	1);
+define('LL_PROMPT',		2);
+define('LL_NOTICE',		3);
+define('LL_INFO',		4);
+define('LL_MOREINFO',	5);
+define('LL_VERBOSE',	6);
+define('LL_DEBUG',		9);
+
+// Default verbosity level
+$verbose_level = LL_DEBUG; // (0 = Errors only, 9 = Everything) See above
+
+// Define pow2 values for filesizes
+define('YCSZ_KiB', (float)1024.0);
+define('YCSZ_MiB', (float)1048576.0);
+define('YCSZ_GiB', (float)1073741824.0);
+define('YCSZ_TiB', (float)1099511627776.0);
+define('YC_FMZ_GIGAMAX', 1);
+
+function strconform($instr) {
+	return strtolower(trim(str_replace(array(" ",".","_","-","!","?","\t","\n","\r"), "", $instr)));
+}
+
+function ycxdef($cn,$cv,$icase=true) {
+	$GLOBALS[$cn] = $cv;
+	$GLOBALS['_YC']['_'][$cn] =& $GLOBALS[$cn];
+	define($cn,$cv,$icase);
+}
+
+function ycgdref($cn,&$cr) {
+	$GLOBALS['_YC'][$cn] =& $cr;
+}
+
+function logthis($instr,$level=LL_INFO) {
+	global $verbose_level;
+	if($level <= $verbose_level) echo $instr;
+}
+
+$GLOBALS['_YC']['zout'] = fopen('php://stdout','w');
+
+ycxdef("ANSI_OFF",		"\033[m");
+ycxdef("ANSI_HI",		"\033[1m");
+ycxdef("ANSI_BLK",		"\033[30m");
+ycxdef("ANSI_RED",		"\033[31m");
+ycxdef("ANSI_GRN",		"\033[32m");
+ycxdef("ANSI_YEL",		"\033[33m");
+ycxdef("ANSI_BLU",		"\033[34m");
+ycxdef("ANSI_MAG",		"\033[35m");
+ycxdef("ANSI_CYN",		"\033[36m");
+ycxdef("ANSI_WHT",		"\033[37m");
+ycxdef("ANSI_B4",		"\033[4D");
+ycxdef("ANSI_CLRSCR",	"\033[2J");
+ycxdef("ANSI_CLRLINE",	"\033[K");
+ycxdef("ANSI_HOME",		"\033[0;0f");
+ycxdef("ANSI_XCLEAR",	ANSI_CLRSCR.ANSI_CLRLINE.ANSI_HOME);
+
+function yc_fmt_fsize($fsintx,$xflags=0) {
+
+	$fsint = intval($fsintx);
+
+	//printf("\n\t\t[[%d]]\n",$fsint);
+
+	if($fsint < 1024) {
+		// bytes
+		$outs = sprintf("%01d B",$fsint);
+	} else if($fsint < YCSZ_MiB) {
+		// kilobytes
+		$outs = sprintf("%01.01f KB",(float)$fsint / YCSZ_KiB);
+	} else if($fsint < YCSZ_GiB) {
+		// megabytes
+		$outs = sprintf("%01.01f MB",(float)$fsint / YCSZ_MiB);
+	} else if($fsint < YCSZ_TiB || ($xflags & YC_FMZ_GIGAMAX)) {
+		// gigabytes
+		$outs = sprintf("%01.02f GB",(float)$fsint / YCSZ_GiB);
+	} else {
+		// terabytes
+		$outs = sprintf("%01.03f TB",(float)$fsint / YCSZ_TiB);
+	}
+
+	return $outs;
+}
+
+function yc_exec($binx,$argvx,&$xout=NULL,$xin=NULL,&$xerr=NULL,$cwdx=NULL) {
+	if(!$cwdx) $cwdx = getcwd();
+
+	$dspec = Array(
+	               0 => array("pipe", "r"),
+	               1 => array("pipe", "w"),
+	               2 => array("pipe", "w")
+	               );
+
+	$cmdx = $binx;
+	foreach($argvx as $zopt => $zarg) {
+		$cmdx .= " ".escapeshellarg($zarg);
+	}
+	$pxp = proc_open($cmdx,$dspec,$piper,$cwdx);
+
+	// input (stdin)
+	fwrite($piper[0],$xin);
+	fclose($piper[0]);
+
+	// output (stdout)
+	$xout = stream_get_contents($piper[1]);
+	fclose($piper[1]);
+
+	// stderr
+	$xerr = stream_get_contents($piper[2]);
+	fclose($piper[2]);
+
+}
+
+function ycmi_rhash($fname) {
+
+	yc_exec('/usr/bin/rhash',Array('--crc32','--md5','--sha1','--ed2k','--printf=%C %m %h %e',$fname),$xox);
+	$xra = explode(' ',trim($xox));
+	$xout['crc32'] = $xra[0];
+	$xout['md5'] = $xra[1];
+	$xout['sha1'] = $xra[2];
+	$xout['ed2k'] = $xra[3];
+
+	return $xout;
+}
+
+function yc_xattr_enum($fpath,$use_root_context=false,$dont_reref=false) {
+	//if(yc_xattr_enabled($fpath) !== true) return Array('error' => 'UNSUPPORTED');
+
+	//$ctxflag = ($use_root_context ? XATTR_ROOT : 0) | ($dont_deref ? XATTR_DONTFOLLOW : 0);
+
+	$xlistx = xattr_list($fpath);
+	//print_r($xlistx);
+
+	if(is_array($xlistx) && count($xlistx) > 0) {
+		foreach($xlistx as $xi => $xv) {
+			$xout[$xv] = xattr_get($fpath,$xv);
+		}
+	} else {
+		$xout = Array(NULL);
+	}
+
+	return $xout;
+}
+
+function ycget_ssh2_genpubkey($pkname) {
+	// generate random filename in temp dir
+	$xfnout = tempnam("/tmp","ycpubk");
+
+	// run ssh-keygen to create public key from private key
+	yc_exec('/usr/bin/ssh-keygen',array('-f',realpath($pkname),'-y'),$xox);
+	if(file_put_contents($xfnout, $xox)) {
+		logthis("Pubkey generated and written successfully [$xfnout]\n",LL_VERBOSE);
+	} else {
+		logthis("Pubkey generation or file creation failed! [destination file = $xfnout]\n",LL_ERROR);
+	}
+
+	chmod($xfnout, 0600);
+
+	return $xfnout;
+}
+
+
+function ycget_add_server($xhost,$xauth,$xpath="/",$xport=22) {
+	if(is_array($xauth)) {
+		if(isset($xauth['type']) && $xauth['type'] == "agent") {
+			$aauth = Array('type' => "agent", 'user' => $xauth['user']);
+		} else if(isset($xauth['type']) && $xauth['type'] == "password") {
+			$aauth = Array('type' => "password", 'user' => $xauth['user'], 'pass' => $xauth['pass']);
+		} else if(isset($xauth['type']) && $xauth['type'] == "pubkey") {
+			$aapriv = realpath($xauth['key']);
+			$aapub = ycget_ssh2_genpubkey($aapriv);
+			$aauth = Array('type' => "pubkey", 'user' => $xauth['user'], 'pub' => $aapub, 'priv' => $aapriv);
+		} else if(!isset($xauth['type']) && isset($xauth['user']) && isset($xauth['pass'])) {
+			$aauth = Array('type' => "password", 'user' => $xauth['user'], 'pass' => $xauth['pass']);
+		}
+	} else if(is_string($xauth)) {
+		list($aauser,$aapass) = explode(":",$xauth);
+		$aauth = Array('type' => "password", 'user' => $aauser, 'pass' => $aapass);
+		unset($aauser); unset($aapass);
+	} else {
+		zlog("Failed to parse xauth parameter. Invalid format. Should be associative array or \"user:pass\" colon-delimited string.");
+		return false;
+	}
+
+	$xray = Array(
+					'hostname' => $xhost,
+					'port' => $xport,
+					'auth' => $aauth,
+					'rpath_init' => $xpath,
+					'status' => 'disconnected',
+					'shand' => NULL
+				 );
+	return $xray;
+}
+
+function ycget_connect_ssh(&$rtarget) {
+
+	// Establish connection to target remote host
+	if(($rtarget['shand'] = ssh2_connect($rtarget['hostname'],$rtarget['port'],NULL,Array('disconnect' => 'ycget_ssh2cb_disconnect'))) === false) {
+		logthis("Connection failed! [hostname = ".$rtarget['hostname'].", port = ".$rtarget['port']."]\n",LL_ERROR);
+		$rtarget['status'] = 'error/connect_fail';
+		return false;
+	} else {
+		logthis("Connection established to ".$rtarget['hostname'].":".$rtarget['port']." OK\n",LL_INFO);
+		$rtarget['status'] = 'connected';
+	}
+
+
+	// Grab the hostkey fingerprint
+	$rtarget['session']['hostkey'] = ssh2_fingerprint($rtarget['shand'], SSH2_FINGERPRINT_MD5 | SSH2_FINGERPRINT_HEX);
+
+	// If known_hostkey is set, do a comparison -- throw a warning if mismatch
+	if(isset($rtarget['known_hostkey']) && $rtarget['known_hostkey']) {
+		if(strconform($rtarget['known_hostkey']) != strconform($rtarget['session']['hostkey'])) {
+			logthis("*** SECURITY WARNING *** : HOST KEY MISMATCH!\n",LL_WARNING);
+			logthis("\tExpected [".$rtarget['known_hostkey']."]\n",LL_WARNING);
+			logthis("\tReceived [".$rtarget['session']['hostkey']."]\n\n",LL_WARNING);
+			$rtarget['session']['host_match'] = false;
+		} else {
+			$rtarget['session']['host_match'] = true;
+		}
+	}
+
+	// Authenticate
+	$atype = $rtarget['auth']['type'];
+	if($atype == "agent") {
+		$a_ok = ssh2_auth_agent($rtarget['shand'],$rtarget['auth']['user']);
+	} else if($atype == "pubkey") {
+		$a_ok = ssh2_auth_pubkey_file($rtarget['shand'], $rtarget['auth']['user'], $rtarget['auth']['pub'], $rtarget['auth']['priv']);
+	} else if($atype == "password") {
+		$a_ok = ssh2_auth_password($rtarget['shand'], $rtarget['auth']['user'], $rtarget['auth']['pass']);
+	} else {
+		logthis("Incorrect authentication type set. [auth.type = $atype]\n",LL_ERROR);
+		$a_ok = false;
+	}
+
+	// Mask & clear the password, if used
+	if(isset($rtarget['auth']['pass'])) {
+		$rtarget['auth']['pass'] = "@@@@@@@@@@@@@@@@@@@";
+		unset($rtarget['auth']['pass']);
+	}
+
+	// Check to see if auth was successful
+	if($a_ok) {
+		logthis("Authentication successful! ^_^ [type = $atype, user = ".$rtarget['auth']['user']."]\n",LL_INFO);
+		$rtarget['status'] = 'connected/auth_ok';
+		return true;
+	} else {
+		logthis("Authentication FAILED! ;_; [type = $atype, user = ".$rtarget['auth']['user']."]\n",LL_ERROR);
+		$rtarget['status'] = 'error/auth_fail';
+		return false;
+	}
+}
+
+function ycget_ssh2cb_disconnect($reason, $message, $language) {
+	logthis("** Disconnected: $reason -- $message [$language]\n",LL_NOTICE);
+}
+
+function ycget_disconnect_ssh(&$rtarget) {
+	if($rtarget['status'] == 'connected/auth_ok') {
+		$rtarget['status'] == 'closing';
+		ssh2_exec($rtarget['shand'],"exit");
+	}
+
+	if($rtarget['auth']['type'] == "pubkey") {
+		if(file_exists($rtarget['auth']['pub'])) {
+			if(unlink($rtarget['auth']['pub'])) {
+				logthis("Autogen pubkey removed successfully [".$rtarget['auth']['pub']."]\n",LL_VERBOSE);
+			} else {
+				logthis("Autogen pubkey could not be removed. [".$rtarget['auth']['pub']."]\n",LL_WARNING);
+			}
+		}
+	}
+}
+
+function ycget_pwd_ssh(&$rtarget) {
+	$sstream = ssh2_exec($rtarget[shand],"pwd");
+	$xpwd = trim(stream_get_contents($sstream));
+	return $xpwd;
+}
+
+function ycget_cd_ssh(&$rtarget,$xdir="~") {
+	$xdir = trim($xdir);
+	if($xdir == "~" || $xdir == "") $cd_cmd = "cd";
+	else $cd_cmd = "cd '$xdir'";
+
+	$sstream = ssh2_exec($rtarget[shand],$cd_cmd);
+	$estream = ssh2_fetch_stream($sstream, SSH2_STREAM_STDERR);
+	$errout = trim(stream_get_contents($estream));
+	if(strlen($errout) > 1) {
+		$rtarget['last_error'] = Array('cmd' => $cd_cmd, 'err' => $errout, 'time' => microtime(true), 'func' => __FUNCTION__);
+		return false;
+	} else {
+		$rtarget['pwd'] = ycget_pwd_ssh($rtarget);
+		return true;
+	}
+}
+
+function ycget_dstat_ssh(&$rtarget,$xpath=".") {
+
+	$xstat = '\stat -c \'"%n": {"chmod": "%a","type":"%F","size":"%s","owner": [%u,"%U"], "group": [%g,"%G"],"mtime": %Y},\' *';
+
+	$xpath = trim($xpath);
+
+	if($xpath == "." || $xpath == "" || $xpath == "./") {
+		$xglob = "*";
+	} else if($xpath[strlen($xpath)-1] != '/') {
+		$xpath .= "/*"
+	} else {
+		$xpath .= "*";
+	}
+
+	$stat_cmd = "$xstat $xglob";
+	logthis("[".__FUNCTION__."] : executing on remote -- `$stat_cmd`\n",LL_DEBUG);
+
+	// execute stat cmd, then get the stdout & stderr stream contents
+	$sstream = ssh2_exec($rtarget[shand],$stat_cmd);
+	$estream = ssh2_fetch_stream($sstream, SSH2_STREAM_STDERR);
+	$errout = stream_get_contents($estream);
+	$rawstat = stream_get_contents($sstream);
+
+	// check to see if it failed (size of stderr contents will be nonzero)
+	if(strlen($errout) > 1) {
+		$rtarget['last_error'] = Array('cmd' => $cd_cmd, 'err' => $errout, 'time' => microtime(true), 'func' => __FUNCTION__);
+		return false;
+	} else {
+		$rtarget['pwd'] = ycget_pwd_ssh($rtarget);
+		return true;
+	}
+
+	// build valid JSON object array, then decode it
+	$jstat = "{ ".substr(trim($rawstat),0,-1)." }";
+	$dstat = json_decode($jstat);
+
+	logthis("[".__FUNCTION__."] ** jstat = \"$jstat\"\n\n",LL_DEBUG);
+	logthis("[".__FUNCTION__."] ** dstat = \n".print_r($dstat,true)."\n",LL_DEBUG);
+
+	return $dstat;
+}
+
+$minorin = ycget_add_server("minorin.ycnrg.org",Array('type' => "pubkey", 'user' => "jacob", 'key' => "/home/jacob/.ssh/ycnrg-minorin-jacob"));
+
+ycget_connect_ssh($minorin);
+
+
+
+ycget_disconnect_ssh($minorin);
+
