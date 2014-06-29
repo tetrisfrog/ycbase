@@ -1,0 +1,81 @@
+#!/usr/bin/php
+<?php
+/**
+ **%%YCDOC*********************************************************************
+ **%%vim: set modelines=40:
+ * 
+ * yc_xbake - YC XBake
+ * YellowCrescent Video Transcoder and Subtitle Baking Utility
+ * 
+ * Copyright (c) 2014 Jacob Hipps - tetrisfrog@gmail.com
+ * http://jhipps.neoretro.net/
+ *
+ * Started: 20 Mar 2014
+ * Updated: 20 Mar 2014
+ * Revision: r1
+ *
+ * @package		neoretro\yellowcrescent
+ * @subpackage	yc_vinfo
+ * @category	media
+ * @fullpkg		neoretro.yellowcrescent.yc_vinfo
+ * @version		0.01.0
+ * @author		Jacob Hipps - tetrisfrog@gmail.com
+ * @copyright	Copyright (c) 2014 Jacob Hipps/Neo-Retro Group
+ * @license		GNU LGPLv3 - http://www.gnu.org/licenses/lgpl.html
+ * @param 		vim: set ts=4 sw=4 noexpandtab syntax=php:
+ *
+ * @depends		apt:mediainfo,apt:mkvtoolnix,apt:ogmtools,pear:xattr
+ *
+ * @link		https://github.com/tetrisfrog/ycbase				YCCC Github page
+ * @link		https://neoretro.net/yccc/							YCCC Home Page - Neo-Retro
+ * @link		http://jhipps.neoretro.net/yccc/media/yc_vinfo		YCCC Tracker - yc_vidinfo
+ *
+ *****************************************************************************/
+
+error_reporting(E_ERROR);
+/*
+
+ffmpeg -i INPUT_FILE -vf scale=HOR_X_RES:VERT_Y_RES,ass=ASSA_SUBFILE -c:v libx264 -crf 20 -preset:v medium -c:a libfaac -b:a 128k OUTPUT_FILE
+
+854x480 - 480p res @ 16:9 AR
+1280x720 - 720p res @ 16:9 AR
+
+ */
+
+$_vinfo_inc = true;
+require_once("yc_vinfo");
+
+$sopt = getopt("i:s:",array("acopy"));
+
+$topdir = $sopt['i'];
+$stid = $sopt['s'];
+if(isset($sopt['acopy'])) $optx['acopy'] = true;
+else $optx['acopy'] = false;
+
+//$n2deep = Array();
+//yc_enumdir($topdir,$n2deep);
+//print_r($n2deep);
+
+exec("ls -1 \"$topdir\"/*.mkv",$mklist);
+
+foreach($mklist as $cfile) {
+	
+	$bfile = basename($cfile);
+	$nfile = substr($bfile,0,-4).".mp4";
+
+	$xxa = "mkvextract tracks \"$cfile\" ${stid}:subtrack.ass";
+	echo ">> Extracting subtitle file... [$xxa]\n";
+	passthru($xxa);
+
+	$atxs = "1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30";
+	$xxa = "mkvextract attachments \"$cfile\" $atxs";
+	echo ">> Extracting attachments... [$xxa]\n";
+	passthru($xxa);
+
+	if($optx['acopy']) $aud_direct ="-c:a copy";
+	else $aud_direct = "-c:a libfaac -b:a 128k";
+
+	$xxa = "ffmpeg -i \"$cfile\" -vf scale=854:480,ass=subtrack.ass -c:v libx264 -crf 20 -preset:v medium $aud_direct \"$nfile\"";
+	echo ">> Transcoding file... [$xxa]\n";
+	passthru($xxa);
+}
